@@ -1,12 +1,13 @@
-import { useState } from "react";
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 const Login = () => {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    console.log("Username:", username, "Password:", password);
+    console.log('Username:', username, 'Password:', password);
   };
 
   return (
@@ -36,9 +37,7 @@ const Login = () => {
           <h1 className="text-3xl font-bold text-center mb-2 bg-gradient-to-l from-blue-400 to-teal-400 bg-clip-text text-transparent">
             Welcome Back!
           </h1>
-          <p className="text-center text-gray-600 mb-8">
-            Please sign in to continue to your account
-          </p>
+          <p className="text-center text-gray-600 mb-8">Please sign in to continue to your account</p>
           <form onSubmit={handleSubmit} className="flex flex-col space-y-6">
             <div className="space-y-2">
               <label className="block text-gray-600 text-sm">Username</label>
@@ -111,7 +110,10 @@ const Login = () => {
           </form>
           <div className="mt-6 text-center">
             <p className="text-gray-600">
-              Not registered yet? <a href="signupPage.html" className="text-blue-500 hover:text-blue-600 font-medium">Create an account</a>
+              Not registered yet?{' '}
+              <Link to="/signup" className="text-blue-500 hover:text-blue-600 font-medium">
+                Create an account
+              </Link>
             </p>
           </div>
         </div>
