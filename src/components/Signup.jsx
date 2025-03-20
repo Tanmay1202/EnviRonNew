@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { auth, db } from '../firebase';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { setDoc, doc } from 'firebase/firestore';
 
 const Signup = () => {
   const [formData, setFormData] = useState({
@@ -8,14 +11,62 @@ const Signup = () => {
     password: '',
     confirmPassword: '',
   });
+  const [error, setError] = useState('');
+  const navigate = useNavigate();
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log('Form Submitted', formData);
+    setError('');
+
+    // Validate passwords match
+    if (formData.password !== formData.confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    try {
+      // Create user with Firebase Authentication
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        formData.email,
+        formData.password
+      );
+
+      // Store additional user data in Firestore
+      await setDoc(doc(db, 'users', userCredential.user.uid), {
+        fullName: formData.fullName,
+        email: formData.email,
+        points: 0,
+        level: 1,
+        badges: [],
+      });
+
+      console.log('User created successfully:', userCredential.user);
+      navigate('/'); // Redirect to login page
+    } catch (err) {
+      // Map Firebase error codes to user-friendly messages
+      switch (err.code) {
+        case 'auth/email-already-in-use':
+          setError('This email is already in use. Please use a different email or sign in.');
+          break;
+        case 'auth/invalid-email':
+          setError('Invalid email address. Please enter a valid email.');
+          break;
+        case 'auth/weak-password':
+          setError('Password is too weak. It should be at least 6 characters long.');
+          break;
+        case 'auth/operation-not-allowed':
+          setError('Signup is currently disabled. Please try again later.');
+          break;
+        default:
+          setError('An error occurred. Please try again.');
+          console.error('Signup error:', err.message);
+      }
+    }
   };
 
   return (
@@ -46,6 +97,7 @@ const Signup = () => {
             Create Account
           </h1>
           <p className="text-center text-gray-600 mb-6 text-sm">Join EnviRon to start your journey</p>
+          {error && <p className="text-red-500 text-center text-sm mb-4">{error}</p>}
           <form onSubmit={handleSubmit} className="flex flex-col space-y-4">
             {[
               { label: 'Full Name', name: 'fullName', type: 'text', placeholder: 'Enter your full name' },
@@ -130,4 +182,4 @@ const Signup = () => {
   );
 };
 
-export default Signup
+export default Signup;
