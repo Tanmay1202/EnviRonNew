@@ -1,13 +1,41 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { auth, db } from '../firebase';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 
 const Login = () => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [formData, setFormData] = useState({
+    email: '',
+    password: '',
+  });
+  const [error, setError] = useState('');
+  const navigate = useNavigate();
 
-  const handleSubmit = (e) => {
+  const handleChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log('Username:', username, 'Password:', password);
+    setError('');
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
+      // Award 10 points for logging in
+      const userDocRef = doc(db, 'users', userCredential.user.uid);
+      const userDoc = await getDoc(userDocRef);
+      if (userDoc.exists()) {
+        const currentPoints = userDoc.data().points || 0;
+        await updateDoc(userDocRef, {
+          points: currentPoints + 10,
+        });
+      }
+      console.log('User logged in successfully:', userCredential.user);
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err.message);
+      console.error('Login error:', err.message);
+    }
   };
 
   return (
@@ -38,9 +66,10 @@ const Login = () => {
             Welcome Back!
           </h1>
           <p className="text-center text-gray-600 mb-8">Please sign in to continue to your account</p>
+          {error && <p className="text-red-500 text-center mb-4">{error}</p>}
           <form onSubmit={handleSubmit} className="flex flex-col space-y-6">
             <div className="space-y-2">
-              <label className="block text-gray-600 text-sm">Username</label>
+              <label className="block text-gray-600 text-sm">Email Address</label>
               <div className="relative">
                 <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
                   <svg
@@ -49,19 +78,17 @@ const Login = () => {
                     viewBox="0 0 20 20"
                     fill="currentColor"
                   >
-                    <path
-                      fillRule="evenodd"
-                      d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
-                      clipRule="evenodd"
-                    />
+                    <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
+                    <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
                   </svg>
                 </span>
                 <input
-                  type="text"
-                  placeholder="Type your username"
+                  type="email"
+                  name="email"
+                  placeholder="Type your email"
                   className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-md text-gray-600 focus:outline-none focus:border-blue-400"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  value={formData.email}
+                  onChange={handleChange}
                   required
                 />
               </div>
@@ -86,10 +113,11 @@ const Login = () => {
                 </span>
                 <input
                   type="password"
+                  name="password"
                   placeholder="Type your password"
                   className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-md text-gray-600 focus:outline-none focus:border-blue-400"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  value={formData.password}
+                  onChange={handleChange}
                   required
                 />
               </div>
