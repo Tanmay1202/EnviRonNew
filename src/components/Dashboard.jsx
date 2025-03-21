@@ -1,20 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaTrophy, FaMedal, FaStar, FaLeaf, FaSun, FaMoon, FaRecycle, FaTrash } from 'react-icons/fa';
+import { FaTrophy, FaMedal, FaStar, FaLeaf, FaSun, FaMoon, FaRecycle, FaTrash, FaTree } from 'react-icons/fa';
 import Confetti from 'react-confetti';
 import { CircularProgressbar, buildStyles } from 'react-circular-progressbar';
 import 'react-circular-progressbar/dist/styles.css';
+import Modal from 'react-modal';
 import { auth, db } from '../firebase';
 import { doc, getDoc, collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
+
+// Bind modal to app element for accessibility
+Modal.setAppElement('#root');
 
 const Dashboard = () => {
   const [userData, setUserData] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
+  const [fullLeaderboard, setFullLeaderboard] = useState([]);
   const [classificationHistory, setClassificationHistory] = useState([]);
   const [leaderboardError, setLeaderboardError] = useState(null);
   const [showConfetti, setShowConfetti] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isLeaderboardModalOpen, setIsLeaderboardModalOpen] = useState(false);
+  const [userRank, setUserRank] = useState(null);
+  const prevLevelRef = useRef(null);
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -24,10 +32,11 @@ const Dashboard = () => {
           const data = userDoc.data();
           setUserData(data);
 
-          // Simulate level-up confetti (for demo purposes, trigger on first load if level > 1)
-          if (data.level > 1) {
+          // Trigger confetti on level-up
+          if (prevLevelRef.current !== null && data.level > prevLevelRef.current) {
             setShowConfetti(true);
           }
+          prevLevelRef.current = data.level;
         }
 
         const historyQuery = query(
@@ -42,6 +51,14 @@ const Dashboard = () => {
 
     const fetchLeaderboard = async () => {
       try {
+        const allUsersQuery = query(collection(db, 'users'), orderBy('points', 'desc'));
+        const allUsersDocs = await getDocs(allUsersQuery);
+        const allUsers = allUsersDocs.docs.map(doc => doc.data());
+        setFullLeaderboard(allUsers);
+
+        const currentUserIndex = allUsers.findIndex(user => user.email === auth.currentUser.email);
+        setUserRank(currentUserIndex + 1);
+
         const leaderboardQuery = query(
           collection(db, 'users'),
           orderBy('points', 'desc'),
@@ -62,9 +79,18 @@ const Dashboard = () => {
 
   const pointsToNextLevel = userData ? (userData.level * 100) - userData.points : 0;
   const progressPercentage = userData ? (userData.points / (userData.level * 100)) * 100 : 0;
+  const treeGrowth = userData ? Math.min(userData.points / 1000, 1) * 100 : 0; // Tree grows fully at 1000 points
 
   const toggleDarkMode = () => {
     setIsDarkMode(!isDarkMode);
+  };
+
+  const openLeaderboardModal = () => {
+    setIsLeaderboardModalOpen(true);
+  };
+
+  const closeLeaderboardModal = () => {
+    setIsLeaderboardModalOpen(false);
   };
 
   return (
@@ -94,7 +120,7 @@ const Dashboard = () => {
           </motion.button>
           <motion.button
             onClick={() => auth.signOut()}
-            className="px-4 py-2 text-white font-medium rounded-full bg-red-500 hover:bg-red-600 transition-colors"
+            className="px-4 py-2 text-white font-medium rounded-full bg-red-500 hover:bg-red-600 transition-colors shadow-lg"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             aria-label="Sign Out"
@@ -110,12 +136,14 @@ const Dashboard = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* User Stats Card */}
             <motion.div
-              className={`col-span-1 md:col-span-2 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-6 border`}
+              className={`col-span-1 md:col-span-2 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-6 border relative overflow-hidden`}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
               whileHover={{ scale: 1.02 }}
             >
+              {/* Subtle Glow Effect */}
+              <div className="absolute inset-0 shadow-[inset_0_0_10px_rgba(45,212,191,0.3)] rounded-2xl pointer-events-none" />
               <h2 className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'} mb-4 flex items-center space-x-2`}>
                 <span>Welcome, {userData.fullName}!</span>
                 <FaStar className="text-yellow-400" />
@@ -126,12 +154,12 @@ const Dashboard = () => {
                   <span className={isDarkMode ? 'text-gray-200' : 'text-gray-800'}>{auth.currentUser.email}</span>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <FaMedal className="text-gold-500" />
+                  <FaMedal className="text-yellow-400 animate-pulse" />
                   <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Points:</span>
                   <span className={`font-bold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{userData.points || 0}</span>
                 </div>
                 <div className="flex items-center space-x-4">
-                  <div className="w-20 h-20">
+                  <div className="w-20 h-20 relative">
                     <CircularProgressbar
                       value={progressPercentage}
                       text={`${userData.level || 1}`}
@@ -142,6 +170,13 @@ const Dashboard = () => {
                         pathTransitionDuration: 1,
                       })}
                     />
+                    <motion.div
+                      className="absolute inset-0 flex items-center justify-center"
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 10, repeat: Infinity, ease: 'linear' }}
+                    >
+                      <FaStar className="text-yellow-400 opacity-50" />
+                    </motion.div>
                   </div>
                   <div className="flex-1">
                     <p className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
@@ -149,20 +184,66 @@ const Dashboard = () => {
                     </p>
                   </div>
                 </div>
+                {/* Green Impact Stat */}
                 <div className="flex items-center space-x-2">
-                  <FaMedal className="text-gold-500" />
-                  <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Badges:</span>
+                  <FaLeaf className="text-green-500" />
+                  <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Green Impact:</span>
                   <span className={isDarkMode ? 'text-gray-200' : 'text-gray-800'}>
-                    {userData.badges?.length > 0 ? userData.badges.join(', ') : 'None'}
+                    You’ve helped recycle {classificationHistory.length} items!
                   </span>
                 </div>
-                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                {/* Tree Growth Animation */}
+                <div className="flex items-center space-x-2">
+                  <motion.div
+                    className="relative w-8 h-8"
+                    initial={{ scale: 0 }}
+                    animate={{ scale: treeGrowth / 100 }}
+                    transition={{ duration: 1 }}
+                  >
+                    <FaTree className="text-green-500 w-full h-full" />
+                  </motion.div>
+                  <span className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                    Your Eco Tree: {Math.round(treeGrowth)}% grown
+                  </span>
+                </div>
+                {/* Badge Showcase */}
+                <div className="space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <FaMedal className="text-yellow-400" />
+                    <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Badges:</span>
+                  </div>
+                  {userData.badges?.length > 0 ? (
+                    <div className="flex space-x-3 overflow-x-auto pb-2">
+                      {userData.badges.map((badge, index) => (
+                        <motion.div
+                          key={index}
+                          className={`p-2 rounded-lg ${isDarkMode ? 'bg-gray-700' : 'bg-gray-100'} flex items-center space-x-2 shadow-md`}
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
+                          transition={{ duration: 0.3, delay: index * 0.1 }}
+                          whileHover={{ scale: 1.1, rotate: 5 }}
+                        >
+                          <FaMedal className="text-yellow-400" />
+                          <span className={isDarkMode ? 'text-gray-200' : 'text-gray-800'}>{badge}</span>
+                        </motion.div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className={isDarkMode ? 'text-gray-400' : 'text-gray-600'}>No badges yet. Keep classifying!</p>
+                  )}
+                </div>
+                <motion.div
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  animate={{ y: [0, -10, 0], transition: { repeat: Infinity, duration: 1.5 } }}
+                >
                   <Link
                     to="/classify"
-                    className={`block w-full py-3 px-4 text-center text-white font-medium rounded-full ${isDarkMode ? 'bg-gradient-to-r from-teal-600 to-blue-600 hover:from-teal-700 hover:to-blue-700' : 'bg-gradient-to-r from-teal-400 to-blue-400 hover:from-teal-500 hover:to-blue-500'} transition-all`}
+                    className={`block w-full py-3 px-4 text-center text-white font-medium rounded-full ${isDarkMode ? 'bg-gradient-to-r from-teal-600 to-blue-600 hover:from-teal-700 hover:to-blue-700' : 'bg-gradient-to-r from-teal-400 to-blue-400 hover:from-teal-500 hover:to-blue-500'} transition-all flex items-center justify-center space-x-2 shadow-lg`}
                     aria-label="Classify Waste"
                   >
-                    Classify Waste
+                    <FaLeaf className="text-white" />
+                    <span>Classify Waste</span>
                   </Link>
                 </motion.div>
               </div>
@@ -170,50 +251,102 @@ const Dashboard = () => {
 
             {/* Leaderboard Card */}
             <motion.div
-              className={`col-span-1 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-6 border`}
+              className={`col-span-1 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-6 border relative overflow-hidden`}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.2 }}
               whileHover={{ scale: 1.02 }}
             >
+              <div className="absolute inset-0 shadow-[inset_0_0_10px_rgba(45,212,191,0.3)] rounded-2xl pointer-events-none" />
               <h2 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'} mb-4 flex items-center space-x-2`}>
-                <FaTrophy className="text-yellow-400" />
+                <FaTrophy className="text-yellow-400 animate-bounce" />
                 <span>Leaderboard</span>
               </h2>
               {leaderboardError ? (
                 <p className="text-red-500">{leaderboardError}</p>
               ) : leaderboard.length > 0 ? (
-                <ul className="space-y-3">
-                  {leaderboard.map((user, index) => (
-                    <motion.li
-                      key={index}
-                      className={`flex items-center space-x-3 p-2 rounded-lg ${index === 0 ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-50 border-yellow-200') : ''} ${isDarkMode ? 'border-gray-700' : 'border-transparent'} border`}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ duration: 0.3, delay: index * 0.1 }}
-                    >
-                      <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{index + 1}.</span>
-                      {index === 0 && <FaTrophy className="text-yellow-400" />}
-                      <span className={`flex-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{user.fullName || 'Unknown'}</span>
-                      <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{user.points || 0} pts</span>
-                    </motion.li>
-                  ))}
-                </ul>
+                <>
+                  <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mb-2`}>Your Rank: {userRank || 'N/A'}</p>
+                  <ul className="space-y-3">
+                    {leaderboard.map((user, index) => (
+                      <motion.li
+                        key={index}
+                        className={`flex items-center space-x-3 p-2 rounded-lg ${user.email === auth.currentUser.email ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-100 border-yellow-200') : index === 0 ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-50 border-yellow-200') : ''} ${isDarkMode ? 'border-gray-700' : 'border-transparent'} border`}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.3, delay: index * 0.1 }}
+                      >
+                        <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{index + 1}.</span>
+                        {index === 0 && <FaTrophy className="text-yellow-400" />}
+                        <span className={`flex-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{user.fullName || 'Unknown'}</span>
+                        <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{user.points || 0} pts</span>
+                      </motion.li>
+                    ))}
+                  </ul>
+                  <motion.button
+                    onClick={openLeaderboardModal}
+                    className={`mt-4 px-4 py-2 text-white font-medium rounded-full ${isDarkMode ? 'bg-blue-600 hover:bg-blue-700' : 'bg-blue-500 hover:bg-blue-600'} transition-colors shadow-lg`}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    aria-label="View Full Leaderboard"
+                  >
+                    View Full Leaderboard
+                  </motion.button>
+                </>
               ) : (
                 <p className={isDarkMode ? 'text-gray-400' : 'text-gray-600'}>No users to display in the leaderboard.</p>
               )}
             </motion.div>
 
+            {/* Full Leaderboard Modal */}
+            <Modal
+              isOpen={isLeaderboardModalOpen}
+              onRequestClose={closeLeaderboardModal}
+              className={`mx-auto my-10 w-11/12 max-w-lg rounded-2xl ${isDarkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'} p-6 shadow-lg`}
+              overlayClassName="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center"
+            >
+              <h2 className="text-2xl font-bold mb-4 flex items-center space-x-2">
+                <FaTrophy className="text-yellow-400" />
+                <span>Full Leaderboard</span>
+              </h2>
+              <ul className="space-y-3 max-h-96 overflow-y-auto">
+                {fullLeaderboard.map((user, index) => (
+                  <motion.li
+                    key={index}
+                    className={`flex items-center space-x-3 p-2 rounded-lg ${user.email === auth.currentUser.email ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-100 border-yellow-200') : index === 0 ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-50 border-yellow-200') : ''} ${isDarkMode ? 'border-gray-700' : 'border-transparent'} border`}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.3, delay: index * 0.1 }}
+                  >
+                    <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{index + 1}.</span>
+                    {index === 0 && <FaTrophy className="text-yellow-400" />}
+                    <span className={`flex-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{user.fullName || 'Unknown'}</span>
+                    <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{user.points || 0} pts</span>
+                  </motion.li>
+                ))}
+              </ul>
+              <motion.button
+                onClick={closeLeaderboardModal}
+                className={`mt-4 px-4 py-2 text-white font-medium rounded-full ${isDarkMode ? 'bg-red-600 hover:bg-red-700' : 'bg-red-500 hover:bg-red-600'} transition-colors shadow-lg`}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                aria-label="Close Leaderboard Modal"
+              >
+                Close
+              </motion.button>
+            </Modal>
+
             {/* Classification History Card */}
             <motion.div
-              className={`col-span-1 md:col-span-3 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-6 border`}
+              className={`col-span-1 md:col-span-3 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-6 border relative overflow-hidden`}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.4 }}
               whileHover={{ scale: 1.02 }}
             >
+              <div className="absolute inset-0 shadow-[inset_0_0_10px_rgba(45,212,191,0.3)] rounded-2xl pointer-events-none" />
               <h2 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'} mb-4 flex items-center space-x-2`}>
-                <FaLeaf className="text-green-500" />
+                <FaLeaf className="text-green-500 animate-pulse" />
                 <span>Recent Classifications</span>
               </h2>
               {classificationHistory.length > 0 ? (
@@ -227,9 +360,9 @@ const Dashboard = () => {
                       transition={{ duration: 0.3, delay: index * 0.1 }}
                     >
                       {entry.classification === 'Recyclable' ? (
-                        <FaRecycle className="text-green-500" />
+                        <FaRecycle className="text-green-500 animate-bounce" />
                       ) : (
-                        <FaTrash className="text-red-500" />
+                        <FaTrash className="text-red-500 animate-bounce" />
                       )}
                       <span className={isDarkMode ? 'text-gray-400' : 'text-gray-600'}>
                         {new Date(entry.timestamp).toLocaleDateString()}
