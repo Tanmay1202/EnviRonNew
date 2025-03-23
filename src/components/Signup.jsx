@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { auth, db } from '../firebase';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { setDoc, doc } from 'firebase/firestore';
+import { supabase } from '../supabase'; // Import Supabase client
 
 const Signup = () => {
   const [formData, setFormData] = useState({
@@ -12,6 +10,8 @@ const Signup = () => {
     confirmPassword: '',
   });
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleChange = (e) => {
@@ -21,51 +21,101 @@ const Signup = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
+    setLoading(true);
 
-    // Validate passwords match
     if (formData.password !== formData.confirmPassword) {
       setError('Passwords do not match');
+      setLoading(false);
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      setError('Invalid email address. Please enter a valid email.');
+      setLoading(false);
       return;
     }
 
     try {
-      // Create user with Firebase Authentication
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        formData.email,
-        formData.password
-      );
-
-      // Store additional user data in Firestore
-      await setDoc(doc(db, 'users', userCredential.user.uid), {
-        fullName: formData.fullName,
+      // Sign up the user with Supabase Auth
+      const { data, error: authError } = await supabase.auth.signUp({
         email: formData.email,
-        points: 0,
-        level: 1,
-        badges: [],
+        password: formData.password,
       });
 
-      console.log('User created successfully:', userCredential.user);
-      navigate('/'); // Redirect to login page
+      if (authError) {
+        if (authError.status === 429) {
+          throw new Error('Email rate limit exceeded. Please wait a few minutes and try again.');
+        }
+        throw authError;
+      }
+
+      // Log the signup response
+      console.log('Signup response:', data);
+
+      // Ensure the session is set
+      if (data.session) {
+        await supabase.auth.setSession(data.session);
+        console.log('Session set successfully:', data.session);
+      } else {
+        // If no session is returned, manually refresh the session
+        await supabase.auth.refreshSession();
+        console.log('Session refreshed');
+      }
+
+      // Verify the user is authenticated
+      const { data: { user } } = await supabase.auth.getUser();
+      console.log('Authenticated user:', user);
+      if (!user) {
+        throw new Error('Failed to authenticate user after signup.');
+      }
+
+      // Log the auth.uid() to compare with data.user.id
+      const authUid = await supabase.auth.getSession();
+      console.log('auth.uid():', authUid?.data?.session?.user?.id);
+      console.log('data.user.id:', data.user.id);
+
+      // Store additional user data in the 'users' table
+      const { error: insertError } = await supabase
+        .from('users')
+        .insert({
+          id: data.user.id,
+          full_name: formData.fullName,
+          email: formData.email,
+          points: 0,
+          level: 1,
+          badges: [],
+        });
+
+      if (insertError) {
+        throw insertError;
+      }
+
+      setSuccess('Account created successfully! Redirecting to login...');
+      setTimeout(() => {
+        navigate('/');
+      }, 2000);
     } catch (err) {
-      // Map Firebase error codes to user-friendly messages
-      switch (err.code) {
-        case 'auth/email-already-in-use':
+      switch (err.message) {
+        case 'User already registered':
           setError('This email is already in use. Please use a different email or sign in.');
           break;
-        case 'auth/invalid-email':
+        case 'Invalid email':
           setError('Invalid email address. Please enter a valid email.');
           break;
-        case 'auth/weak-password':
+        case 'Password should be at least 6 characters':
           setError('Password is too weak. It should be at least 6 characters long.');
           break;
-        case 'auth/operation-not-allowed':
-          setError('Signup is currently disabled. Please try again later.');
+        case 'Email rate limit exceeded. Please wait a few minutes and try again.':
+          setError(err.message);
           break;
         default:
-          setError('An error occurred. Please try again.');
+          setError(err.message || 'An error occurred. Please try again.');
           console.error('Signup error:', err.message);
       }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -98,6 +148,7 @@ const Signup = () => {
           </h1>
           <p className="text-center text-gray-600 mb-6 text-sm">Join EnviRon to start your journey</p>
           {error && <p className="text-red-500 text-center text-sm mb-4">{error}</p>}
+          {success && <p className="text-green-500 text-center text-sm mb-4">{success}</p>}
           <form onSubmit={handleSubmit} className="flex flex-col space-y-4">
             {[
               { label: 'Full Name', name: 'fullName', type: 'text', placeholder: 'Enter your full name' },
@@ -157,15 +208,17 @@ const Signup = () => {
                     placeholder={field.placeholder}
                     className="w-full pl-9 pr-4 py-1.5 border border-gray-200 rounded-md text-gray-600 focus:outline-none focus:border-blue-400 text-sm"
                     required
+                    disabled={loading}
                   />
                 </div>
               </div>
             ))}
             <button
               type="submit"
-              className="w-full py-2 px-4 text-white font-medium rounded-md bg-gradient-to-l from-blue-400 to-teal-400 hover:opacity-90 transition-opacity text-sm mt-2"
+              className="w-full py-2 px-4 text-white font-medium rounded-md bg-gradient-to-l from-blue-400 to-teal-400 hover:opacity-90 transition-opacity text-sm mt-2 disabled:opacity-50"
+              disabled={loading}
             >
-              Create Account
+              {loading ? 'Creating Account...' : 'Create Account'}
             </button>
           </form>
           <div className="mt-4 text-center">

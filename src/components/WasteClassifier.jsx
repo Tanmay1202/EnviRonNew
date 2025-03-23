@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { auth, db } from '../firebase';
-import { doc, updateDoc, getDoc, addDoc, collection } from 'firebase/firestore';
-import toast from 'react-hot-toast'; // Add this import
+import { supabase } from '../supabase'; // Import Supabase client
+import toast from 'react-hot-toast';
 
 const WasteClassifier = () => {
   const [image, setImage] = useState(null);
@@ -24,34 +23,48 @@ const WasteClassifier = () => {
     }
 
     try {
-      const classification = 'Recyclable';
+      const classification = 'Recyclable'; // Placeholder; replace with actual classification logic
       const item = image.name || 'Unknown Item';
 
       setResult(`Classified as: ${classification}`);
 
-      if (auth.currentUser) {
-        const userDocRef = doc(db, 'users', auth.currentUser.uid);
-        const userDoc = await getDoc(userDocRef);
-        if (userDoc.exists()) {
-          const currentPoints = userDoc.data().points || 0;
-          await updateDoc(userDocRef, {
-            points: currentPoints + 20,
-          });
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        // Update user points
+        const { data: userData, error: fetchError } = await supabase
+          .from('users')
+          .select('points')
+          .eq('id', user.id)
+          .single();
 
-          await addDoc(collection(db, `users/${auth.currentUser.uid}/classifications`), {
+        if (fetchError) {
+          throw fetchError;
+        }
+
+        const currentPoints = userData.points || 0;
+        await supabase
+          .from('users')
+          .update({ points: currentPoints + 20 })
+          .eq('id', user.id);
+
+        // Store classification in the 'classifications' table
+        await supabase
+          .from('classifications')
+          .insert({
+            user_id: user.id,
             item: item,
-            classification: classification,
+            result: classification,
+            points_earned: 20,
             timestamp: new Date().toISOString(),
           });
 
-          // Show toast notification for points earned
-          toast.success('🎉 +20 Points Earned!', {
-            style: {
-              background: '#34D399',
-              color: '#fff',
-            },
-          });
-        }
+        // Show toast notification for points earned
+        toast.success('🎉 +20 Points Earned!', {
+          style: {
+            background: '#34D399',
+            color: '#fff',
+          },
+        });
       }
     } catch (err) {
       setError('Error classifying image: ' + err.message);

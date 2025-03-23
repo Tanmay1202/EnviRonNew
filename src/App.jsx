@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { auth } from './firebase';
-import { onAuthStateChanged } from 'firebase/auth';
-import { Toaster } from 'react-hot-toast'; // Add this import
+import { Toaster } from 'react-hot-toast';
+import { supabase } from './supabase'; // Import Supabase client
 import Login from './components/Login.jsx';
 import Signup from './components/Signup.jsx';
 import Dashboard from './components/Dashboard.jsx';
@@ -13,11 +12,25 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
+    // Get the initial session
+    const fetchSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setUser(session?.user ?? null);
+      setLoading(false);
+    };
+
+    fetchSession();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null);
       setLoading(false);
     });
-    return () => unsubscribe();
+
+    // Clean up the subscription on unmount
+    return () => {
+      subscription?.unsubscribe();
+    };
   }, []);
 
   if (loading) {
@@ -30,7 +43,7 @@ function App() {
 
   return (
     <Router>
-      <Toaster position="top-right" /> {/* Add Toaster here */}
+      <Toaster position="top-right" />
       <Routes>
         <Route path="/" element={user ? <Navigate to="/dashboard" /> : <Login />} />
         <Route path="/signup" element={user ? <Navigate to="/dashboard" /> : <Signup />} />

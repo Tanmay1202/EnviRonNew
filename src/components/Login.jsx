@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { auth, db } from '../firebase';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { supabase } from '../supabase'; // Import Supabase client
 
 const Login = () => {
   const [formData, setFormData] = useState({
@@ -20,17 +18,33 @@ const Login = () => {
     e.preventDefault();
     setError('');
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
-      // Award 10 points for logging in
-      const userDocRef = doc(db, 'users', userCredential.user.uid);
-      const userDoc = await getDoc(userDocRef);
-      if (userDoc.exists()) {
-        const currentPoints = userDoc.data().points || 0;
-        await updateDoc(userDocRef, {
-          points: currentPoints + 10,
-        });
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: formData.email,
+        password: formData.password,
+      });
+
+      if (error) {
+        throw error;
       }
-      console.log('User logged in successfully:', userCredential.user);
+
+      // Award 10 points for logging in
+      const { data: userData, error: fetchError } = await supabase
+        .from('users')
+        .select('points')
+        .eq('id', data.user.id)
+        .single();
+
+      if (fetchError) {
+        throw fetchError;
+      }
+
+      const currentPoints = userData.points || 0;
+      await supabase
+        .from('users')
+        .update({ points: currentPoints + 10 })
+        .eq('id', data.user.id);
+
+      console.log('User logged in successfully:', data.user);
       navigate('/dashboard');
     } catch (err) {
       setError(err.message);

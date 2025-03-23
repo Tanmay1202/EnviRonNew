@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaTrophy, FaMedal, FaStar, FaLeaf, FaSun, FaMoon, FaRecycle, FaTrash, FaTree } from 'react-icons/fa';
 import Confetti from 'react-confetti';
 import { CircularProgressbar, buildStyles } from 'react-circular-progressbar';
 import 'react-circular-progressbar/dist/styles.css';
 import Modal from 'react-modal';
-import { auth, db } from '../firebase';
-import { doc, getDoc, collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
+import { supabase } from '../supabase';
 
 // Bind modal to app element for accessibility
 Modal.setAppElement('#root');
@@ -22,14 +21,31 @@ const Dashboard = () => {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isLeaderboardModalOpen, setIsLeaderboardModalOpen] = useState(false);
   const [userRank, setUserRank] = useState(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState(null); // To highlight current user in leaderboard
   const prevLevelRef = useRef(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const fetchUserData = async () => {
-      if (auth.currentUser) {
-        const userDoc = await getDoc(doc(db, 'users', auth.currentUser.uid));
-        if (userDoc.exists()) {
-          const data = userDoc.data();
+      try {
+        // Get the current user from Supabase Auth
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          // Set the current user's email for leaderboard comparison
+          setCurrentUserEmail(user.email);
+
+          // Fetch user data from the 'users' table
+          const { data, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+
+          if (error) {
+            console.error('Error fetching user data:', error);
+            return;
+          }
+
           setUserData(data);
 
           // Trigger confetti on level-up
@@ -37,35 +53,58 @@ const Dashboard = () => {
             setShowConfetti(true);
           }
           prevLevelRef.current = data.level;
-        }
 
-        const historyQuery = query(
-          collection(db, `users/${auth.currentUser.uid}/classifications`),
-          orderBy('timestamp', 'desc'),
-          limit(5)
-        );
-        const historyDocs = await getDocs(historyQuery);
-        setClassificationHistory(historyDocs.docs.map(doc => doc.data()));
+          // Fetch classification history
+          const { data: historyData, error: historyError } = await supabase
+            .from('classifications')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('timestamp', { ascending: false })
+            .limit(5);
+
+          if (historyError) {
+            console.error('Error fetching classification history:', historyError);
+            return;
+          }
+
+          setClassificationHistory(historyData);
+        }
+      } catch (err) {
+        console.error('Error in fetchUserData:', err);
       }
     };
 
     const fetchLeaderboard = async () => {
       try {
-        const allUsersQuery = query(collection(db, 'users'), orderBy('points', 'desc'));
-        const allUsersDocs = await getDocs(allUsersQuery);
-        const allUsers = allUsersDocs.docs.map(doc => doc.data());
+        // Fetch all users for the full leaderboard
+        const { data: allUsers, error: allUsersError } = await supabase
+          .from('users')
+          .select('full_name, points, email')
+          .order('points', { ascending: false });
+
+        if (allUsersError) {
+          throw allUsersError;
+        }
+
         setFullLeaderboard(allUsers);
 
-        const currentUserIndex = allUsers.findIndex(user => user.email === auth.currentUser.email);
+        // Get current user's email to compute rank
+        const { data: { user } } = await supabase.auth.getUser();
+        const currentUserIndex = allUsers.findIndex(u => u.email === user.email);
         setUserRank(currentUserIndex + 1);
 
-        const leaderboardQuery = query(
-          collection(db, 'users'),
-          orderBy('points', 'desc'),
-          limit(5)
-        );
-        const leaderboardDocs = await getDocs(leaderboardQuery);
-        setLeaderboard(leaderboardDocs.docs.map(doc => doc.data()));
+        // Fetch top 5 for the leaderboard
+        const { data: leaderboardData, error: leaderboardError } = await supabase
+          .from('users')
+          .select('full_name, points, email')
+          .order('points', { ascending: false })
+          .limit(5);
+
+        if (leaderboardError) {
+          throw leaderboardError;
+        }
+
+        setLeaderboard(leaderboardData);
         setLeaderboardError(null);
       } catch (err) {
         console.error('Error fetching leaderboard:', err);
@@ -73,8 +112,39 @@ const Dashboard = () => {
       }
     };
 
+    // Initial fetch
     fetchUserData();
     fetchLeaderboard();
+
+    // Set up real-time subscription for leaderboard updates
+    const leaderboardSubscription = supabase
+      .channel('public:users')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'users' },
+        (payload) => {
+          fetchLeaderboard();
+        }
+      )
+      .subscribe();
+
+    // Set up real-time subscription for classification history updates
+    const historySubscription = supabase
+      .channel('public:classifications')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'classifications' },
+        (payload) => {
+          fetchUserData(); // Refetch user data and history when a new classification is added
+        }
+      )
+      .subscribe();
+
+    // Clean up subscriptions on unmount
+    return () => {
+      supabase.removeChannel(leaderboardSubscription);
+      supabase.removeChannel(historySubscription);
+    };
   }, []);
 
   const pointsToNextLevel = userData ? (userData.level * 100) - userData.points : 0;
@@ -91,6 +161,15 @@ const Dashboard = () => {
 
   const closeLeaderboardModal = () => {
     setIsLeaderboardModalOpen(false);
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut();
+      navigate('/'); // Redirect to login page after sign-out
+    } catch (err) {
+      console.error('Error signing out:', err);
+    }
   };
 
   return (
@@ -119,7 +198,7 @@ const Dashboard = () => {
             {isDarkMode ? <FaSun /> : <FaMoon />}
           </motion.button>
           <motion.button
-            onClick={() => auth.signOut()}
+            onClick={handleSignOut}
             className="px-4 py-2 text-white font-medium rounded-full bg-red-500 hover:bg-red-600 transition-colors shadow-lg"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
@@ -145,18 +224,22 @@ const Dashboard = () => {
               {/* Subtle Glow Effect */}
               <div className="absolute inset-0 shadow-[inset_0_0_10px_rgba(45,212,191,0.3)] rounded-2xl pointer-events-none" />
               <h2 className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'} mb-4 flex items-center space-x-2`}>
-                <span>Welcome, {userData.fullName}!</span>
+                <span>Welcome, {userData.full_name}!</span>
                 <FaStar className="text-yellow-400" />
               </h2>
               <div className="space-y-4">
                 <div className="flex items-center space-x-2">
                   <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Email:</span>
-                  <span className={isDarkMode ? 'text-gray-200' : 'text-gray-800'}>{auth.currentUser.email}</span>
+                  <span className={`${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                    {userData.email}
+                  </span>
                 </div>
                 <div className="flex items-center space-x-2">
                   <FaMedal className="text-yellow-400 animate-pulse" />
                   <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Points:</span>
-                  <span className={`font-bold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{userData.points || 0}</span>
+                  <span className={`font-bold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                    {userData.points || 0}
+                  </span>
                 </div>
                 <div className="flex items-center space-x-4">
                   <div className="w-20 h-20 relative">
@@ -188,7 +271,7 @@ const Dashboard = () => {
                 <div className="flex items-center space-x-2">
                   <FaLeaf className="text-green-500" />
                   <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Green Impact:</span>
-                  <span className={isDarkMode ? 'text-gray-200' : 'text-gray-800'}>
+                  <span className={`${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
                     You’ve helped recycle {classificationHistory.length} items!
                   </span>
                 </div>
@@ -224,12 +307,12 @@ const Dashboard = () => {
                           whileHover={{ scale: 1.1, rotate: 5 }}
                         >
                           <FaMedal className="text-yellow-400" />
-                          <span className={isDarkMode ? 'text-gray-200' : 'text-gray-800'}>{badge}</span>
+                          <span className={`${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{badge}</span>
                         </motion.div>
                       ))}
                     </div>
                   ) : (
-                    <p className={isDarkMode ? 'text-gray-400' : 'text-gray-600'}>No badges yet. Keep classifying!</p>
+                    <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>No badges yet. Keep classifying!</p>
                   )}
                 </div>
                 <motion.div
@@ -271,14 +354,14 @@ const Dashboard = () => {
                     {leaderboard.map((user, index) => (
                       <motion.li
                         key={index}
-                        className={`flex items-center space-x-3 p-2 rounded-lg ${user.email === auth.currentUser.email ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-100 border-yellow-200') : index === 0 ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-50 border-yellow-200') : ''} ${isDarkMode ? 'border-gray-700' : 'border-transparent'} border`}
+                        className={`flex items-center space-x-3 p-2 rounded-lg ${user.email === currentUserEmail ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-100 border-yellow-200') : index === 0 ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-50 border-yellow-200') : ''} ${isDarkMode ? 'border-gray-700' : 'border-transparent'} border`}
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ duration: 0.3, delay: index * 0.1 }}
                       >
                         <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{index + 1}.</span>
                         {index === 0 && <FaTrophy className="text-yellow-400" />}
-                        <span className={`flex-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{user.fullName || 'Unknown'}</span>
+                        <span className={`flex-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{user.full_name || 'Unknown'}</span>
                         <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{user.points || 0} pts</span>
                       </motion.li>
                     ))}
@@ -294,7 +377,7 @@ const Dashboard = () => {
                   </motion.button>
                 </>
               ) : (
-                <p className={isDarkMode ? 'text-gray-400' : 'text-gray-600'}>No users to display in the leaderboard.</p>
+                <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>No users to display in the leaderboard.</p>
               )}
             </motion.div>
 
@@ -313,14 +396,14 @@ const Dashboard = () => {
                 {fullLeaderboard.map((user, index) => (
                   <motion.li
                     key={index}
-                    className={`flex items-center space-x-3 p-2 rounded-lg ${user.email === auth.currentUser.email ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-100 border-yellow-200') : index === 0 ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-50 border-yellow-200') : ''} ${isDarkMode ? 'border-gray-700' : 'border-transparent'} border`}
+                    className={`flex items-center space-x-3 p-2 rounded-lg ${user.email === currentUserEmail ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-100 border-yellow-200') : index === 0 ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-50 border-yellow-200') : ''} ${isDarkMode ? 'border-gray-700' : 'border-transparent'} border`}
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ duration: 0.3, delay: index * 0.1 }}
                   >
                     <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{index + 1}.</span>
                     {index === 0 && <FaTrophy className="text-yellow-400" />}
-                    <span className={`flex-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{user.fullName || 'Unknown'}</span>
+                    <span className={`flex-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{user.full_name || 'Unknown'}</span>
                     <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{user.points || 0} pts</span>
                   </motion.li>
                 ))}
@@ -359,18 +442,18 @@ const Dashboard = () => {
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ duration: 0.3, delay: index * 0.1 }}
                     >
-                      {entry.classification === 'Recyclable' ? (
+                      {entry.result === 'Recyclable' ? (
                         <FaRecycle className="text-green-500 animate-bounce" />
                       ) : (
                         <FaTrash className="text-red-500 animate-bounce" />
                       )}
-                      <span className={isDarkMode ? 'text-gray-400' : 'text-gray-600'}>
+                      <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                         {new Date(entry.timestamp).toLocaleDateString()}
                       </span>
-                      <span className={`flex-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{entry.item}</span>
+                      <span className={`flex-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{entry.item || 'Unknown Item'}</span>
                       <span
                         className={`text-sm font-medium px-2 py-1 rounded-full ${
-                          entry.classification === 'Recyclable'
+                          entry.result === 'Recyclable'
                             ? isDarkMode
                               ? 'bg-green-900 text-green-300'
                               : 'bg-green-100 text-green-700'
@@ -379,13 +462,13 @@ const Dashboard = () => {
                             : 'bg-red-100 text-red-700'
                         }`}
                       >
-                        {entry.classification}
+                        {entry.result}
                       </span>
                     </motion.li>
                   ))}
                 </ul>
               ) : (
-                <p className={isDarkMode ? 'text-gray-400' : 'text-gray-600'}>No classifications yet. Start by classifying waste!</p>
+                <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>No classifications yet. Start by classifying waste!</p>
               )}
             </motion.div>
           </div>
