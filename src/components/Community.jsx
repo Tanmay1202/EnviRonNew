@@ -22,60 +22,95 @@ const Community = () => {
 
   useEffect(() => {
     const fetchData = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          navigate('/');
+      const maxRetries = 3;
+      let attempt = 0;
+
+      // Check cache first
+      const cachedData = localStorage.getItem('communityData');
+      if (cachedData) {
+        const { posts, leaderboard, challenges, userChallenges, referrals } = JSON.parse(cachedData);
+        setPosts(posts);
+        setLeaderboard(leaderboard);
+        setChallenges(challenges);
+        setUserChallenges(userChallenges);
+        setReferrals(referrals);
+      }
+
+      while (attempt < maxRetries) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) {
+            navigate('/');
+            return;
+          }
+
+          // Fetch posts
+          const { data: postsData, error: postsError } = await supabase
+            .from('posts')
+            .select('id, user_id, content, created_at, likes, comments, tags, users(full_name)')
+            .order('created_at', { ascending: false });
+
+          if (postsError) throw postsError;
+
+          // Fetch leaderboard
+          const { data: leaderboardData, error: leaderboardError } = await supabase
+            .from('users')
+            .select('full_name, points')
+            .order('points', { ascending: false })
+            .limit(5);
+
+          if (leaderboardError) throw leaderboardError;
+
+          // Fetch challenges
+          const { data: challengesData, error: challengesError } = await supabase
+            .from('challenges')
+            .select('*')
+            .order('start_date', { ascending: false });
+
+          if (challengesError) throw challengesError;
+
+          // Fetch user's challenge participation
+          const { data: userChallengesData, error: userChallengesError } = await supabase
+            .from('challenge_participants')
+            .select('challenge_id, progress, completed')
+            .eq('user_id', user.id);
+
+          if (userChallengesError) throw userChallengesError;
+
+          // Fetch referrals
+          const { data: referralsData, error: referralsError } = await supabase
+            .from('referrals')
+            .select('referred_id')
+            .eq('referrer_id', user.id);
+
+          if (referralsError) throw referralsError;
+
+          // Update state
+          setPosts(postsData);
+          setLeaderboard(leaderboardData);
+          setChallenges(challengesData);
+          setUserChallenges(userChallengesData);
+          setReferrals(referralsData);
+
+          // Cache the data
+          localStorage.setItem('communityData', JSON.stringify({
+            posts: postsData,
+            leaderboard: leaderboardData,
+            challenges: challengesData,
+            userChallenges: userChallengesData,
+            referrals: referralsData,
+          }));
+
+          return; // Success, exit the retry loop
+        } catch (err) {
+          if (err.status === 503 && attempt < maxRetries - 1) {
+            attempt++;
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
+            continue;
+          }
+          setError('Failed to load community data: ' + err.message);
           return;
         }
-
-        // Fetch posts
-        const { data: postsData, error: postsError } = await supabase
-          .from('posts')
-          .select('id, user_id, content, created_at, likes, comments, tags, users(full_name)')
-          .order('created_at', { ascending: false });
-
-        if (postsError) throw postsError;
-        setPosts(postsData);
-
-        // Fetch leaderboard
-        const { data: leaderboardData, error: leaderboardError } = await supabase
-          .from('users')
-          .select('full_name, points')
-          .order('points', { ascending: false })
-          .limit(5);
-
-        if (leaderboardError) throw leaderboardError;
-        setLeaderboard(leaderboardData);
-
-        // Fetch challenges
-        const { data: challengesData, error: challengesError } = await supabase
-          .from('challenges')
-          .select('*')
-          .order('start_date', { ascending: false });
-
-        if (challengesError) throw challengesError;
-        setChallenges(challengesData);
-
-        // Fetch user's challenge participation
-        const { data: userChallengesData, error: userChallengesError } = await supabase
-          .from('challenge_participants')
-          .select('challenge_id, progress, completed')
-          .eq('user_id', user.id);
-
-        if (userChallengesError) throw userChallengesError;
-        setUserChallenges(userChallengesData);
-
-        // Fetch referrals
-        const { data: referralsData, error: referralsError } = await supabase
-          .from('referrals')
-          .select('referred_id')
-          .eq('referrer_id', user.id);
-
-        if (referralsError) throw referralsError;
-        setReferrals(referralsData);
-      } catch (err) {
-        setError('Failed to load community data: ' + err.message);
       }
     };
 
@@ -123,6 +158,8 @@ const Community = () => {
         user_id: user.id,
         content: newPost,
         tags: postTags,
+        likes: [], // Initialize likes as an empty array
+        comments: [], // Initialize comments as an empty array
       });
 
       if (error) throw error;
@@ -159,13 +196,29 @@ const Community = () => {
 
   const handleLike = async (postId) => {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
       const post = posts.find((p) => p.id === postId);
+
+      // Ensure likes is an array; initialize as empty array if null
+      let currentLikes = Array.isArray(post.likes) ? post.likes : [];
+
+      // Check if the user has already liked the post
+      const hasLiked = currentLikes.includes(user.id);
+      const updatedLikes = hasLiked
+        ? currentLikes.filter(id => id !== user.id) // Unlike
+        : [...currentLikes, user.id]; // Like
+
       const { error } = await supabase
         .from('posts')
-        .update({ likes: (post.likes || 0) + 1 })
+        .update({ likes: updatedLikes })
         .eq('id', postId);
 
       if (error) throw error;
+
+      // Update local state to reflect the change
+      setPosts(posts.map(p =>
+        p.id === postId ? { ...p, likes: updatedLikes } : p
+      ));
     } catch (err) {
       setError('Failed to like post: ' + err.message);
     }
@@ -174,13 +227,19 @@ const Community = () => {
   const handleComment = async (postId, comment) => {
     try {
       const post = posts.find((p) => p.id === postId);
-      const updatedComments = [...(post.comments || []), comment];
+      const currentComments = Array.isArray(post.comments) ? post.comments : [];
+      const updatedComments = [...currentComments, comment];
       const { error } = await supabase
         .from('posts')
         .update({ comments: updatedComments })
         .eq('id', postId);
 
       if (error) throw error;
+
+      // Update local state to reflect the change
+      setPosts(posts.map(p =>
+        p.id === postId ? { ...p, comments: updatedComments } : p
+      ));
     } catch (err) {
       setError('Failed to add comment: ' + err.message);
     }
@@ -189,13 +248,19 @@ const Community = () => {
   const handleJoinChallenge = async (challengeId) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      const { error } = await supabase.from('challenge_participants').insert({
+      const { error } = await supabase.from('challenge_participants').upsert({
         user_id: user.id,
         challenge_id: challengeId,
         progress: 0,
+        completed: false,
+      }, {
+        onConflict: ['user_id', 'challenge_id']
       });
 
       if (error) throw error;
+
+      // Update local state to reflect the user joining the challenge
+      setUserChallenges([...userChallenges, { challenge_id: challengeId, progress: 0, completed: false }]);
     } catch (err) {
       setError('Failed to join challenge: ' + err.message);
     }
@@ -219,9 +284,18 @@ const Community = () => {
           challenge_id: challengeId,
           progress: newProgress,
           completed: newProgress >= challenge.goal,
+        }, {
+          onConflict: ['user_id', 'challenge_id']
         });
 
       if (error) throw error;
+
+      // Update local state
+      setUserChallenges(userChallenges.map(uc =>
+        uc.challenge_id === challengeId
+          ? { ...uc, progress: newProgress, completed: newProgress >= challenge.goal }
+          : uc
+      ));
 
       // Award badge and update level for completing a challenge
       if (newProgress >= challenge.goal) {
@@ -278,6 +352,11 @@ const Community = () => {
               .update({ completed: false, progress: 0 })
               .eq('user_id', user.id)
               .eq('challenge_id', challengeId);
+            setUserChallenges(userChallenges.map(uc =>
+              uc.challenge_id === challengeId
+                ? { ...uc, progress: 0, completed: false }
+                : uc
+            ));
             return;
           }
         }
@@ -354,6 +433,8 @@ const Community = () => {
   };
 
   const handleSignOut = async () => {
+    // Clear cache on sign out
+    localStorage.removeItem('communityData');
     await supabase.auth.signOut();
     navigate('/');
   };
@@ -724,7 +805,7 @@ const Community = () => {
                         className={`flex items-center space-x-1 ${isDarkMode ? 'text-gray-300 hover:text-red-400' : 'text-gray-600 hover:text-red-500'} transition-colors`}
                       >
                         <FaHeart />
-                        <span>{post.likes || 0}</span>
+                        <span>{post.likes?.length || 0}</span>
                       </button>
                       <button
                         onClick={() => {
