@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaTrophy, FaMedal, FaStar, FaLeaf, FaSun, FaMoon, FaRecycle, FaTrash, FaTree, FaComment, FaBars, FaTimes } from 'react-icons/fa';
+import { FaTrophy, FaMedal, FaStar, FaLeaf, FaSun, FaMoon, FaRecycle, FaTrash, FaTree, FaComment, FaBars, FaTimes, FaCloud } from 'react-icons/fa';
 import Confetti from 'react-confetti';
 import { CircularProgressbar, buildStyles } from 'react-circular-progressbar';
 import 'react-circular-progressbar/dist/styles.css';
@@ -24,13 +24,18 @@ const Dashboard = () => {
   const [userRank, setUserRank] = useState(null);
   const [currentUserEmail, setCurrentUserEmail] = useState(null);
   const [chatMessage, setChatMessage] = useState('');
-  const [chatResponse, setChatResponse] = useState('');
+  const [chatHistory, setChatHistory] = useState([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState('');
-  const [weather, setWeather] = useState('');
-  const [recAnswer, setRecAnswer] = useState('');
-  const [recommendation, setRecommendation] = useState('');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // For mobile sidebar
+  const [weather, setWeather] = useState(null);
+  const [weatherTab, setWeatherTab] = useState('current');
+  const [recQuestions, setRecQuestions] = useState([
+    { question: 'Do you recycle?', answer: '' },
+    { question: 'Do you use reusable bags?', answer: '' },
+  ]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [recommendations, setRecommendations] = useState([]);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const prevLevelRef = useRef(null);
   const navigate = useNavigate();
 
@@ -63,8 +68,7 @@ const Dashboard = () => {
             .from('classifications')
             .select('*')
             .eq('user_id', user.id)
-            .order('timestamp', { ascending: false })
-            .limit(5);
+            .order('timestamp', { ascending: false });
 
           if (historyError) {
             console.error('Error fetching classification history:', historyError);
@@ -72,6 +76,19 @@ const Dashboard = () => {
           }
 
           setClassificationHistory(historyData);
+
+          // Check for "Climate Champion" badge (5 kg CO2 saved)
+          const recyclableCount = historyData.filter(c => c.result === 'Recyclable').length;
+          const co2Saved = recyclableCount * 0.2; // 0.2 kg CO2 saved per recyclable item
+          let badges = data.badges || [];
+          if (co2Saved >= 5 && !badges.includes('Climate Champion')) {
+            badges.push('Climate Champion');
+            await supabase
+              .from('users')
+              .update({ badges })
+              .eq('id', user.id);
+            setUserData({ ...data, badges });
+          }
         }
       } catch (err) {
         console.error('Error in fetchUserData:', err);
@@ -115,14 +132,25 @@ const Dashboard = () => {
 
     const fetchWeather = async () => {
       try {
+        const { data: { user } } = await supabase.auth.getUser();
+        const { data: userData } = await supabase
+          .from('users')
+          .select('city')
+          .eq('id', user.id)
+          .single();
+
+        const city = userData?.city || 'London';
         const response = await fetch(
-          `https://api.openweathermap.org/data/2.5/weather?q=London&appid=${import.meta.env.VITE_OPENWEATHER_API_KEY}&units=metric`
+          `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${import.meta.env.VITE_OPENWEATHER_API_KEY}&units=metric`
         );
         const data = await response.json();
-        setWeather(`Today in London: ${data.main.temp}°C, ${data.weather[0].description}`);
+        if (!response.ok) {
+          throw new Error(data.message || 'Failed to fetch weather data');
+        }
+        setWeather(data);
       } catch (error) {
         console.error('Error fetching weather:', error);
-        setWeather('Weather data unavailable');
+        setWeather({ error: error.message });
       }
     };
 
@@ -167,7 +195,6 @@ const Dashboard = () => {
 
     setChatLoading(true);
     setChatError('');
-    setChatResponse('');
 
     try {
       const response = await fetch(
@@ -197,7 +224,25 @@ const Dashboard = () => {
       }
 
       const chatReply = data.candidates[0].content.parts[0].text;
-      setChatResponse(chatReply);
+      setChatHistory([...chatHistory, { user: chatMessage, bot: chatReply }]);
+
+      // Check for "Eco Learner" badge (3 chatbot interactions)
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: userData } = await supabase
+        .from('users')
+        .select('badges')
+        .eq('id', user.id)
+        .single();
+
+      let badges = userData.badges || [];
+      if (chatHistory.length + 1 >= 3 && !badges.includes('Eco Learner')) {
+        badges.push('Eco Learner');
+        await supabase
+          .from('users')
+          .update({ badges })
+          .eq('id', user.id);
+        setUserData({ ...userData, badges });
+      }
     } catch (err) {
       setChatError('Error fetching eco-tip: ' + err.message);
     } finally {
@@ -208,16 +253,72 @@ const Dashboard = () => {
 
   const handleRecSubmit = (e) => {
     e.preventDefault();
-    setRecommendation(
-      recAnswer.toLowerCase() === 'yes'
-        ? 'Great! Try composting next.'
-        : 'Start recycling to save 0.2 kg CO2e!'
-    );
+    const currentQuestion = recQuestions[currentQuestionIndex];
+    const answer = currentQuestion.answer.toLowerCase();
+
+    let recommendation = '';
+    if (currentQuestion.question.includes('recycle')) {
+      recommendation = answer === 'yes' ? 'Great! Try composting next.' : 'Start recycling to save 0.2 kg CO2e!';
+    } else if (currentQuestion.question.includes('reusable bags')) {
+      recommendation = answer === 'yes' ? 'Awesome! Consider using a reusable water bottle too.' : 'Switch to reusable bags to reduce plastic waste!';
+    }
+
+    setRecommendations([...recommendations, recommendation]);
+
+    if (currentQuestionIndex < recQuestions.length - 1) {
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
+    } else {
+      setCurrentQuestionIndex(0);
+    }
+
+    const updatedQuestions = [...recQuestions];
+    updatedQuestions[currentQuestionIndex].answer = '';
+    setRecQuestions(updatedQuestions);
   };
 
   const pointsToNextLevel = userData ? (userData.level * 100) - userData.points : 0;
   const progressPercentage = userData ? (userData.points / (userData.level * 100)) * 100 : 0;
   const treeGrowth = userData ? Math.min(userData.points / 1000, 1) * 100 : 0;
+
+  // Calculate environmental impact
+  const calculateImpact = () => {
+    const recyclableCount = classificationHistory.filter(c => c.result === 'Recyclable').length;
+    const co2Saved = recyclableCount * 0.2; // 0.2 kg CO2 saved per recyclable item
+    const totalClassifications = classificationHistory.length;
+    const potentialCo2Savings = totalClassifications * 0.2; // If all items were recyclable
+
+    return { co2Saved, potentialCo2Savings, recyclableCount, totalClassifications };
+  };
+
+  // Generate climate tips based on weather
+  const generateClimateTips = () => {
+    if (!weather || weather.error) return [];
+    const temp = weather.main.temp;
+    const condition = weather.weather[0].description.toLowerCase();
+    const { co2Saved } = calculateImpact();
+
+    const tips = [];
+    // Temperature-based tips
+    if (temp > 25) {
+      tips.push('It’s hot today! Reduce energy use by using fans instead of air conditioning.');
+    } else if (temp < 10) {
+      tips.push('It’s cold today! Insulate your home to reduce heating energy consumption.');
+    } else {
+      tips.push('Mild weather today—perfect for air-drying clothes instead of using a dryer!');
+    }
+
+    // Condition-based tips
+    if (condition.includes('rain')) {
+      tips.push('Rainy weather is great for indoor activities—try composting your food waste!');
+    } else if (condition.includes('clear') || condition.includes('sun')) {
+      tips.push('Sunny weather is ideal for solar-powered devices—charge your gadgets sustainably!');
+    }
+
+    // Impact-based tip
+    tips.push(`You’ve saved ${co2Saved.toFixed(1)} kg of CO2 by recycling. Keep it up by classifying more items!`);
+
+    return tips;
+  };
 
   const toggleDarkMode = () => {
     setIsDarkMode(!isDarkMode);
@@ -263,6 +364,9 @@ const Dashboard = () => {
           <h1 className="text-xl md:text-2xl font-bold text-white">EnviRon</h1>
         </div>
         <div className="hidden md:flex items-center space-x-4">
+          <Link to="/profile" className="text-white hover:text-gray-200 transition-colors">
+            Profile
+          </Link>
           <Link to="/classify" className="text-white hover:text-gray-200 transition-colors">
             Classify Waste
           </Link>
@@ -307,6 +411,13 @@ const Dashboard = () => {
               </button>
             </div>
             <nav className="space-y-4">
+              <Link
+                to="/profile"
+                onClick={toggleSidebar}
+                className={`block text-lg ${isDarkMode ? 'text-gray-200 hover:text-teal-300' : 'text-gray-800 hover:text-teal-500'} transition-colors`}
+              >
+                Profile
+              </Link>
               <Link
                 to="/classify"
                 onClick={toggleSidebar}
@@ -518,7 +629,7 @@ const Dashboard = () => {
                   )}
                 </motion.div>
 
-                {/* Weather Widget Card */}
+                {/* Weather Widget Card with Tabs */}
                 <motion.div
                   className={`col-span-1 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-6 border relative overflow-hidden`}
                   initial={{ opacity: 0, y: 20 }}
@@ -528,10 +639,76 @@ const Dashboard = () => {
                 >
                   <div className="absolute inset-0 shadow-[inset_0_0_10px_rgba(45,212,191,0.3)] rounded-2xl pointer-events-none" />
                   <h3 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'} mb-4 flex items-center space-x-2`}>
-                    <FaSun className="text-yellow-400 animate-pulse" />
-                    <span>Weather</span>
+                    <FaCloud className="text-blue-400 animate-pulse" />
+                    <span>Weather & Climate</span>
                   </h3>
-                  <p className={`${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{weather}</p>
+                  {/* Tabs */}
+                  <div className="flex space-x-2 mb-4">
+                    <button
+                      onClick={() => setWeatherTab('current')}
+                      className={`px-4 py-2 rounded-lg font-medium transition-colors ${weatherTab === 'current' ? (isDarkMode ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white') : (isDarkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-700')}`}
+                    >
+                      Current Weather
+                    </button>
+                    <button
+                      onClick={() => setWeatherTab('impact')}
+                      className={`px-4 py-2 rounded-lg font-medium transition-colors ${weatherTab === 'impact' ? (isDarkMode ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white') : (isDarkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-700')}`}
+                    >
+                      Climate Impact
+                    </button>
+                  </div>
+                  {/* Tab Content */}
+                  {weatherTab === 'current' ? (
+                    <div>
+                      {weather ? (
+                        weather.error ? (
+                          <p className={`${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>{weather.error}</p>
+                        ) : (
+                          <p className={`${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                            Today in {weather.name}: {weather.main.temp}°C, {weather.weather[0].description}
+                          </p>
+                        )
+                      ) : (
+                        <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Loading weather...</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {weather ? (
+                        weather.error ? (
+                          <p className={`${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>{weather.error}</p>
+                        ) : (
+                          <>
+                            <div className={`p-3 rounded-lg ${isDarkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                              <h4 className={`font-medium ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>Your Impact</h4>
+                              <p className={`${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                                You’ve classified {classificationHistory.length} items.{' '}
+                                {calculateImpact().co2Saved.toFixed(1)} kg of CO2 saved by recycling!
+                              </p>
+                              <p className={`${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                                If all items were recycled, you could have saved {calculateImpact().potentialCo2Savings.toFixed(1)} kg of CO2.
+                              </p>
+                              <p className={`${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                                Warmer temperatures like today’s {weather.main.temp}°C in {weather.name} increase energy use—your efforts help reduce emissions!
+                              </p>
+                            </div>
+                            <div className={`p-3 rounded-lg ${isDarkMode ? 'bg-green-900' : 'bg-green-100'}`}>
+                              <h4 className={`font-medium ${isDarkMode ? 'text-green-300' : 'text-green-700'}`}>Climate Tips</h4>
+                              <ul className="list-disc list-inside space-y-1">
+                                {generateClimateTips().map((tip, index) => (
+                                  <li key={index} className={`${isDarkMode ? 'text-green-200' : 'text-green-600'}`}>
+                                    {tip}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          </>
+                        )
+                      ) : (
+                        <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Loading weather...</p>
+                      )}
+                    </div>
+                  )}
                 </motion.div>
 
                 {/* Quick Action Card */}
@@ -585,6 +762,21 @@ const Dashboard = () => {
                     <FaComment className="text-blue-500 animate-pulse" />
                     <span>Eco-Tips Chatbot</span>
                   </h3>
+                  <div className="max-h-60 overflow-y-auto mb-4 space-y-3">
+                    {chatHistory.map((chat, index) => (
+                      <div key={index}>
+                        <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>You: {chat.user}</p>
+                        <motion.div
+                          className={`p-3 rounded-lg ${isDarkMode ? 'bg-gray-700 text-gray-200' : 'bg-gray-100 text-gray-800'} shadow-md`}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3 }}
+                        >
+                          <p>Bot: {chat.bot}</p>
+                        </motion.div>
+                      </div>
+                    ))}
+                  </div>
                   <form onSubmit={handleChatSubmit} className="space-y-4">
                     <div className="flex items-center space-x-3">
                       <input
@@ -637,16 +829,6 @@ const Dashboard = () => {
                         {chatError}
                       </motion.p>
                     )}
-                    {chatResponse && (
-                      <motion.div
-                        className={`p-4 rounded-lg ${isDarkMode ? 'bg-gray-700 text-gray-200' : 'bg-gray-100 text-gray-800'} shadow-md`}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.3 }}
-                      >
-                        <p>{chatResponse}</p>
-                      </motion.div>
-                    )}
                   </form>
                 </motion.div>
 
@@ -667,9 +849,13 @@ const Dashboard = () => {
                     <div className="flex items-center space-x-3">
                       <input
                         type="text"
-                        value={recAnswer}
-                        onChange={(e) => setRecAnswer(e.target.value)}
-                        placeholder="Do you recycle? (Yes/No)"
+                        value={recQuestions[currentQuestionIndex].answer}
+                        onChange={(e) => {
+                          const updatedQuestions = [...recQuestions];
+                          updatedQuestions[currentQuestionIndex].answer = e.target.value;
+                          setRecQuestions(updatedQuestions);
+                        }}
+                        placeholder={recQuestions[currentQuestionIndex].question}
                         className={`flex-1 p-3 rounded-lg border ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-200 placeholder-gray-400' : 'bg-gray-100 border-gray-300 text-gray-800 placeholder-gray-500'} focus:outline-none focus:ring-2 focus:ring-teal-400 transition-all`}
                       />
                       <motion.button
@@ -681,15 +867,20 @@ const Dashboard = () => {
                         Submit
                       </motion.button>
                     </div>
-                    {recommendation && (
-                      <motion.p
-                        className={`p-2 rounded-lg ${isDarkMode ? 'bg-green-900 text-green-300' : 'bg-green-100 text-green-700'}`}
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ duration: 0.3 }}
-                      >
-                        {recommendation}
-                      </motion.p>
+                    {recommendations.length > 0 && (
+                      <div className="space-y-2">
+                        {recommendations.map((rec, index) => (
+                          <motion.p
+                            key={index}
+                            className={`p-2 rounded-lg ${isDarkMode ? 'bg-green-900 text-green-300' : 'bg-green-100 text-green-700'}`}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ duration: 0.3 }}
+                          >
+                            {rec}
+                          </motion.p>
+                        ))}
+                      </div>
                     )}
                   </form>
                 </motion.div>
@@ -702,7 +893,7 @@ const Dashboard = () => {
                 <FaLeaf className="text-green-500" />
                 <span>History & Goals</span>
               </h2>
-              <div className="grid grid-cols-1 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Classification History Card */}
                 <motion.div
                   className={`col-span-1 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-6 border relative overflow-hidden`}
@@ -718,7 +909,7 @@ const Dashboard = () => {
                   </h3>
                   {classificationHistory.length > 0 ? (
                     <ul className="space-y-3">
-                      {classificationHistory.map((entry, index) => (
+                      {classificationHistory.slice(0, 5).map((entry, index) => (
                         <motion.li
                           key={index}
                           className={`flex items-center space-x-3 p-2 rounded-lg ${isDarkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-50'} transition-colors`}
@@ -726,7 +917,7 @@ const Dashboard = () => {
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ duration: 0.3, delay: index * 0.1 }}
                         >
-                          {entry.result === 'Recyclable' ? (
+                          {entry.result.includes('Recyclable') ? (
                             <FaRecycle className="text-green-500 animate-bounce" />
                           ) : (
                             <FaTrash className="text-red-500 animate-bounce" />
@@ -737,7 +928,7 @@ const Dashboard = () => {
                           <span className={`flex-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{entry.item || 'Unknown Item'}</span>
                           <span
                             className={`text-sm font-medium px-2 py-1 rounded-full ${
-                              entry.result === 'Recyclable'
+                              entry.result.includes('Recyclable')
                                 ? isDarkMode
                                   ? 'bg-green-900 text-green-300'
                                   : 'bg-green-100 text-green-700'
@@ -746,7 +937,7 @@ const Dashboard = () => {
                                 : 'bg-red-100 text-red-700'
                             }`}
                           >
-                            {entry.result}
+                            {entry.result.split(' - ')[1]}
                           </span>
                         </motion.li>
                       ))}
@@ -766,74 +957,140 @@ const Dashboard = () => {
                 >
                   <div className="absolute inset-0 shadow-[inset_0_0_10px_rgba(45,212,191,0.3)] rounded-2xl pointer-events-none" />
                   <h3 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'} mb-4 flex items-center space-x-2`}>
-                    <FaStar className="text-yellow-400 animate-pulse" />
+                    <FaStar className="text-yellow-400" />
                     <span>Unlockable Features</span>
                   </h3>
                   <div className="space-y-3">
-                    <div className={`p-4 rounded-lg ${userData.level >= 5 ? (isDarkMode ? 'bg-green-900' : 'bg-green-100') : (isDarkMode ? 'bg-gray-700 opacity-75' : 'bg-gray-100 opacity-75')} flex items-center space-x-3`}>
-                      <FaStar className={`${userData.level >= 5 ? 'text-green-500' : 'text-gray-400'} animate-pulse`} />
-                      <div className="flex-1">
-                        <p className={`font-medium ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
-                          Advanced Analytics
-                        </p>
-                        <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                          {userData.level >= 5
-                            ? 'Unlocked! View detailed stats about your environmental impact.'
-                            : 'Unlock at Level 5 to view detailed stats about your environmental impact.'}
-                        </p>
-                      </div>
-                      {userData.level < 5 && (
-                        <span className={`text-sm font-medium px-2 py-1 rounded-full ${isDarkMode ? 'bg-yellow-900 text-yellow-300' : 'bg-yellow-100 text-yellow-700'}`}>
-                          Locked
-                        </span>
-                      )}
+                    <div className={`p-3 rounded-lg ${userData.level >= 5 ? (isDarkMode ? 'bg-green-900' : 'bg-green-100') : (isDarkMode ? 'bg-gray-700' : 'bg-gray-100')}`}>
+                      <p className={`font-medium ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                        Advanced Analytics
+                      </p>
+                      <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} text-sm`}>
+                        {userData.level >= 5 ? 'Unlocked! View detailed stats below.' : 'Reach Level 5 to unlock detailed analytics.'}
+                      </p>
+                    </div>
+                    <div className={`p-3 rounded-lg ${userData.level >= 3 ? (isDarkMode ? 'bg-green-900' : 'bg-green-100') : (isDarkMode ? 'bg-gray-700' : 'bg-gray-100')}`}>
+                      <p className={`font-medium ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                        Community Challenges
+                      </p>
+                      <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} text-sm`}>
+                        {userData.level >= 3 ? 'Unlocked! Check them out in the Community section.' : 'Reach Level 3 to unlock community challenges.'}
+                      </p>
                     </div>
                   </div>
                 </motion.div>
               </div>
             </section>
+
+            {/* Advanced Analytics Section (Unlocked at Level 5) */}
+            {userData.level >= 5 && (
+              <section className="space-y-6">
+                <h2 className={`text-2xl md:text-3xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'} flex items-center space-x-2`}>
+                  <FaStar className="text-yellow-400" />
+                  <span>Advanced Analytics</span>
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {/* Total Items Classified */}
+                  <motion.div
+                    className={`col-span-1 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-6 border relative overflow-hidden`}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5, delay: 0.9 }}
+                    whileHover={{ scale: 1.02 }}
+                  >
+                    <div className="absolute inset-0 shadow-[inset_0_0_10px_rgba(45,212,191,0.3)] rounded-2xl pointer-events-none" />
+                    <h3 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'} mb-4`}>Total Items Classified</h3>
+                    <p className={`text-3xl font-bold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                      {calculateImpact().totalClassifications}
+                    </p>
+                    <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mt-2`}>
+                      Keep classifying to make a bigger impact!
+                    </p>
+                  </motion.div>
+
+                  {/* Recyclable vs Non-Recyclable Breakdown */}
+                  <motion.div
+                    className={`col-span-1 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-6 border relative overflow-hidden`}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5, delay: 1.0 }}
+                    whileHover={{ scale: 1.02 }}
+                  >
+                    <div className="absolute inset-0 shadow-[inset_0_0_10px_rgba(45,212,191,0.3)] rounded-2xl pointer-events-none" />
+                    <h3 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'} mb-4`}>Recyclable vs Non-Recyclable</h3>
+                    <div className="space-y-2">
+                      <p className={`${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                        Recyclable: {calculateImpact().recyclableCount} items
+                      </p>
+                      <p className={`${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                        Non-Recyclable: {calculateImpact().totalClassifications - calculateImpact().recyclableCount} items
+                      </p>
+                      <div className="w-full bg-gray-200 rounded-full h-4">
+                        <div
+                          className="bg-green-500 h-4 rounded-full"
+                          style={{ width: `${(calculateImpact().recyclableCount / calculateImpact().totalClassifications) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  </motion.div>
+
+                  {/* CO2 Savings */}
+                  <motion.div
+                    className={`col-span-1 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-6 border relative overflow-hidden`}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5, delay: 1.1 }}
+                    whileHover={{ scale: 1.02 }}
+                  >
+                    <div className="absolute inset-0 shadow-[inset_0_0_10px_rgba(45,212,191,0.3)] rounded-2xl pointer-events-none" />
+                    <h3 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'} mb-4`}>CO2 Savings</h3>
+                    <p className={`text-3xl font-bold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                      {calculateImpact().co2Saved.toFixed(1)} kg
+                    </p>
+                    <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mt-2`}>
+                      Equivalent to planting {Math.round(calculateImpact().co2Saved / 0.5)} trees!
+                    </p>
+                  </motion.div>
+                </div>
+              </section>
+            )}
           </>
         ) : (
           <p className={`text-center ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Loading...</p>
         )}
       </main>
 
-      {/* Full Leaderboard Modal */}
+      {/* Leaderboard Modal */}
       <Modal
         isOpen={isLeaderboardModalOpen}
         onRequestClose={closeLeaderboardModal}
-        className={`mx-auto my-10 w-11/12 max-w-lg rounded-2xl ${isDarkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'} p-6 shadow-lg`}
+        className={`m-4 md:m-auto md:w-1/2 ${isDarkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'} rounded-2xl shadow-lg p-6 relative`}
         overlayClassName="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center"
       >
-        <h2 className="text-2xl font-bold mb-4 flex items-center space-x-2">
-          <FaTrophy className="text-yellow-400" />
-          <span>Full Leaderboard</span>
-        </h2>
-        <ul className="space-y-3 max-h-96 overflow-y-auto">
-          {fullLeaderboard.map((user, index) => (
-            <motion.li
-              key={index}
-              className={`flex items-center space-x-3 p-2 rounded-lg ${user.email === currentUserEmail ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-100 border-yellow-200') : index === 0 ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-50 border-yellow-200') : ''} ${isDarkMode ? 'border-gray-700' : 'border-transparent'} border`}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.3, delay: index * 0.1 }}
-            >
-              <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{index + 1}.</span>
-              {index === 0 && <FaTrophy className="text-yellow-400" />}
-              <span className={`flex-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{user.full_name || 'Unknown'}</span>
-              <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{user.points || 0} pts</span>
-            </motion.li>
-          ))}
-        </ul>
-        <motion.button
-          onClick={closeLeaderboardModal}
-          className={`mt-4 px-4 py-2 text-white font-medium rounded-full ${isDarkMode ? 'bg-red-600 hover:bg-red-700' : 'bg-red-500 hover:bg-red-600'} transition-colors shadow-lg`}
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          aria-label="Close Leaderboard Modal"
-        >
-          Close
-        </motion.button>
+        <h2 className={`text-2xl font-bold mb-4 ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>Full Leaderboard</h2>
+        <button onClick={closeLeaderboardModal} className="absolute top-4 right-4 text-gray-500 hover:text-gray-700">
+          <FaTimes />
+        </button>
+        {fullLeaderboard.length > 0 ? (
+          <ul className="space-y-3 max-h-96 overflow-y-auto">
+            {fullLeaderboard.map((user, index) => (
+              <motion.li
+                key={index}
+                className={`flex items-center space-x-3 p-2 rounded-lg ${user.email === currentUserEmail ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-100 border-yellow-200') : index === 0 ? (isDarkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-50 border-yellow-200') : ''} ${isDarkMode ? 'border-gray-700' : 'border-transparent'} border`}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.3, delay: index * 0.1 }}
+              >
+                <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{index + 1}.</span>
+                {index === 0 && <FaTrophy className="text-yellow-400" />}
+                <span className={`flex-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{user.full_name || 'Unknown'}</span>
+                <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{user.points || 0} pts</span>
+              </motion.li>
+            ))}
+          </ul>
+        ) : (
+          <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>No users to display in the leaderboard.</p>
+        )}
       </Modal>
     </div>
   );
