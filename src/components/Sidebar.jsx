@@ -1,6 +1,7 @@
+// src/components/Sidebar.jsx
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { FaMedal, FaLock } from 'react-icons/fa';
+import { motion, AnimatePresence } from 'framer-motion';
+import { FaMedal, FaLock, FaChevronDown, FaChevronUp } from 'react-icons/fa';
 import { supabase } from '../supabase';
 
 const Sidebar = ({ isDarkMode, isSidebarOpen, toggleSidebar }) => {
@@ -8,6 +9,11 @@ const Sidebar = ({ isDarkMode, isSidebarOpen, toggleSidebar }) => {
   const [challengesCompleted, setChallengesCompleted] = useState(0);
   const [postsShared, setPostsShared] = useState(0);
   const [referralsCount, setReferralsCount] = useState(0);
+
+  // State for collapsible sections
+  const [isLevelOpen, setIsLevelOpen] = useState(true);
+  const [isBadgesOpen, setIsBadgesOpen] = useState(true);
+  const [isRoadmapOpen, setIsRoadmapOpen] = useState(true);
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -41,10 +47,10 @@ const Sidebar = ({ isDarkMode, isSidebarOpen, toggleSidebar }) => {
           .select('id')
           .eq('referrer_id', user.id);
 
-        setUserData(userInfo);
-        setChallengesCompleted(completedChallenges.length);
-        setPostsShared(userPosts.length);
-        setReferralsCount(referralsData.length);
+        setUserData(userInfo || { level: 1, badges: [], points: 0 });
+        setChallengesCompleted(completedChallenges ? completedChallenges.length : 0);
+        setPostsShared(userPosts ? userPosts.length : 0);
+        setReferralsCount(referralsData ? referralsData.length : 0);
       } catch (err) {
         console.error('Error fetching user data:', err.message);
       }
@@ -98,81 +104,155 @@ const Sidebar = ({ isDarkMode, isSidebarOpen, toggleSidebar }) => {
 
   return (
     <motion.div
-      className={`md:w-64 ${isDarkMode ? 'bg-gray-800' : 'bg-white'} p-6 space-y-6 ${isSidebarOpen ? 'block' : 'hidden md:block'}`}
+      className={`md:w-72 ${isDarkMode ? 'bg-gray-900' : 'bg-gray-50'} p-6 space-y-4 shadow-lg border-r ${isDarkMode ? 'border-gray-700' : 'border-gray-200'} ${isSidebarOpen ? 'block' : 'hidden md:block'}`}
       initial={{ x: -256 }}
       animate={{ x: 0 }}
       exit={{ x: -256 }}
       transition={{ duration: 0.3 }}
     >
-      {/* Current Level and Progress */}
-      <div>
-        <h3 className={`text-lg font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
-          Level {userData.level}: {roadmap[userData.level - 1]?.title}
-        </h3>
-        <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-          Points: {userData.points}
-        </p>
-        <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
-          <div
-            className="bg-green-500 h-2 rounded-full"
-            style={{ width: `${(userData.points / (roadmap[userData.level]?.pointsRequired || 50)) * 100}%` }}
-          />
-        </div>
-      </div>
-
-      {/* Badges */}
-      <div>
-        <h3 className={`text-lg font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>Badges</h3>
-        <div className="flex flex-wrap gap-2 mt-2">
-          {userData.badges?.length > 0 ? (
-            userData.badges.map((badge, index) => (
-              <motion.div
-                key={index}
-                className="relative group"
-                whileHover={{ scale: 1.1 }}
-              >
-                <FaMedal className="text-yellow-400 h-6 w-6" />
-                <span className="absolute hidden group-hover:block bg-gray-700 text-white text-xs rounded p-1 -top-8 left-1/2 transform -translate-x-1/2">
-                  {badge}
-                </span>
-              </motion.div>
-            ))
+      {/* Current Level and Progress Section */}
+      <div className="rounded-lg overflow-hidden">
+        <button
+          onClick={() => setIsLevelOpen(!isLevelOpen)}
+          className={`w-full flex justify-between items-center p-3 ${isDarkMode ? 'bg-gray-800 hover:bg-gray-700' : 'bg-gray-100 hover:bg-gray-200'} transition-colors duration-200`}
+        >
+          <h3 className={`text-lg font-semibold ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>
+            Level {userData.level}: {roadmap[userData.level - 1]?.title}
+          </h3>
+          {isLevelOpen ? (
+            <FaChevronUp className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`} />
           ) : (
-            <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>No badges yet!</p>
+            <FaChevronDown className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`} />
           )}
-        </div>
+        </button>
+        <AnimatePresence>
+          {isLevelOpen && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="p-3"
+            >
+              <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                Points: {userData.points}
+              </p>
+              <div className={`w-full ${isDarkMode ? 'bg-gray-700' : 'bg-gray-200'} rounded-full h-3 mt-2 overflow-hidden`}>
+                <motion.div
+                  className="bg-gradient-to-r from-green-400 to-teal-500 h-3 rounded-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${(userData.points / (roadmap[userData.level]?.pointsRequired || 50)) * 100}%` }}
+                  transition={{ duration: 0.5 }}
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
-      {/* Roadmap */}
-      <div>
-        <h3 className={`text-lg font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>Roadmap</h3>
-        <div className="space-y-4 mt-2">
-          {roadmap.map((level) => (
-            <div
-              key={level.level}
-              className={`p-3 rounded-lg ${level.isUnlocked ? (isDarkMode ? 'bg-gray-700' : 'bg-gray-100') : 'opacity-50'}`}
+      {/* Badges Section */}
+      <div className="rounded-lg overflow-hidden">
+        <button
+          onClick={() => setIsBadgesOpen(!isBadgesOpen)}
+          className={`w-full flex justify-between items-center p-3 ${isDarkMode ? 'bg-gray-800 hover:bg-gray-700' : 'bg-gray-100 hover:bg-gray-200'} transition-colors duration-200`}
+        >
+          <h3 className={`text-lg font-semibold ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>
+            Badges ({userData.badges?.length || 0})
+          </h3>
+          {isBadgesOpen ? (
+            <FaChevronUp className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`} />
+          ) : (
+            <FaChevronDown className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`} />
+          )}
+        </button>
+        <AnimatePresence>
+          {isBadgesOpen && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="p-3"
             >
-              <div className="flex items-center space-x-2">
-                {level.isUnlocked ? (
-                  <FaMedal className="text-green-500" />
+              <div className="flex flex-wrap gap-3">
+                {userData.badges?.length > 0 ? (
+                  userData.badges.map((badge, index) => (
+                    <motion.div
+                      key={index}
+                      className="relative group"
+                      whileHover={{ scale: 1.1, rotate: 5 }}
+                      transition={{ type: 'spring', stiffness: 300 }}
+                    >
+                      <FaMedal className="text-yellow-400 h-8 w-8 drop-shadow-md" />
+                      <span className="absolute hidden group-hover:block bg-gray-800 text-white text-xs rounded-lg p-2 -top-10 left-1/2 transform -translate-x-1/2 shadow-lg">
+                        {badge}
+                      </span>
+                    </motion.div>
+                  ))
                 ) : (
-                  <FaLock className="text-gray-500" />
-                )}
-                <div>
-                  <h4 className={`font-medium ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
-                    Level {level.level}: {level.title}
-                  </h4>
                   <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    {level.requirements}
+                    No badges yet! Keep going!
                   </p>
-                  <p className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                    {level.features}
-                  </p>
-                </div>
+                )}
               </div>
-            </div>
-          ))}
-        </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Roadmap Section */}
+      <div className="rounded-lg overflow-hidden">
+        <button
+          onClick={() => setIsRoadmapOpen(!isRoadmapOpen)}
+          className={`w-full flex justify-between items-center p-3 ${isDarkMode ? 'bg-gray-800 hover:bg-gray-700' : 'bg-gray-100 hover:bg-gray-200'} transition-colors duration-200`}
+        >
+          <h3 className={`text-lg font-semibold ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>
+            Roadmap
+          </h3>
+          {isRoadmapOpen ? (
+            <FaChevronUp className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`} />
+          ) : (
+            <FaChevronDown className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`} />
+          )}
+        </button>
+        <AnimatePresence>
+          {isRoadmapOpen && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="p-3 space-y-3"
+            >
+              {roadmap.map((level) => (
+                <motion.div
+                  key={level.level}
+                  className={`p-4 rounded-lg shadow-sm transition-all duration-200 ${level.isUnlocked ? (isDarkMode ? 'bg-gray-700' : 'bg-white') : (isDarkMode ? 'bg-gray-800 opacity-60' : 'bg-gray-100 opacity-60')}`}
+                  whileHover={{ scale: 1.02 }}
+                >
+                  <div className="flex items-start space-x-3">
+                    {level.isUnlocked ? (
+                      <FaMedal className="text-green-500 h-5 w-5 mt-1" />
+                    ) : (
+                      <FaLock className="text-gray-500 h-5 w-5 mt-1" />
+                    )}
+                    <div>
+                      <h4 className={`font-medium ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                        Level {level.level}: {level.title}
+                      </h4>
+                      <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mt-1`}>
+                        {level.requirements}
+                      </p>
+                      <p className={`text-sm ${isDarkMode ? 'text-teal-300' : 'text-teal-600'} mt-1`}>
+                        Unlocks: {level.features}
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </motion.div>
   );
