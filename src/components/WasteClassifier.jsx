@@ -29,13 +29,12 @@ const WasteClassifier = () => {
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      // Validate file type and size
       const validTypes = ['image/jpeg', 'image/png', 'image/jpg'];
       if (!validTypes.includes(file.type)) {
         setError('Please upload a valid image (JPEG, PNG, or JPG).');
         return;
       }
-      if (file.size > 5 * 1024 * 1024) { // 5MB limit
+      if (file.size > 5 * 1024 * 1024) {
         setError('Image size must be less than 5MB.');
         return;
       }
@@ -62,7 +61,6 @@ const WasteClassifier = () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
 
-      // Mock classification logic based on file name
       const itemName = image.name.split('.')[0].toLowerCase();
       const classificationMap = {
         'bottle': { isRecyclable: true, material: 'Plastic', instructions: 'Remove cap and label, rinse thoroughly, then place in blue recycling bin.', tip: 'Use a reusable water bottle to reduce plastic waste.' },
@@ -80,7 +78,6 @@ const WasteClassifier = () => {
         disposalInstructions = itemData.instructions;
         wasteReductionTip = itemData.tip;
       } else {
-        // Default to a generic classification if item is not recognized
         const isRecyclable = Math.random() > 0.5;
         classificationResult = isRecyclable ? 'Recyclable - Unknown Material' : 'Non-Recyclable - Unknown Material';
         disposalInstructions = isRecyclable
@@ -89,7 +86,6 @@ const WasteClassifier = () => {
         wasteReductionTip = 'Consider researching the item’s recyclability or reducing its use.';
       }
 
-      // Upload image to Supabase Storage
       const fileExt = image.name.split('.').pop();
       const fileName = `${user.id}/${Date.now()}.${fileExt}`;
       const { error: uploadError } = await supabase.storage
@@ -110,8 +106,7 @@ const WasteClassifier = () => {
 
       const imageUrl = urlData.publicUrl;
 
-      // Insert classification into Supabase
-      const weight = classificationResult.includes('Recyclable') ? 0.1 : 0; // 0.1 kg for recyclable items
+      const weight = classificationResult.includes('Recyclable') ? 0.1 : 0;
       const { error: insertError } = await supabase.from('classifications').insert({
         user_id: user.id,
         item: itemName,
@@ -144,109 +139,62 @@ const WasteClassifier = () => {
             .eq('challenge_id', challengeData.id)
             .single();
 
-          if (userChallengeError && userChallengeError.code !== 'PGRST116') { // PGRST116 means no rows found
+          if (userChallengeError && userChallengeError.code !== 'PGRST116') {
             throw new Error('Failed to fetch challenge progress: ' + userChallengeError.message);
           }
 
-          if (userChallenge) {
-            let newProgress = userChallenge.progress + weight;
-            if (newProgress >= challengeData.goal) {
-              newProgress = challengeData.goal;
+          let newProgress = (userChallenge?.progress || 0) + weight;
+          if (newProgress >= challengeData.goal) {
+            newProgress = challengeData.goal;
+          }
+
+          const { error: upsertChallengeError } = await supabase
+            .from('challenge_participants')
+            .upsert({
+              user_id: user.id,
+              challenge_id: challengeData.id,
+              progress: newProgress,
+              completed: newProgress >= challengeData.goal,
+            }, {
+              onConflict: ['user_id', 'challenge_id']
+            });
+
+          if (upsertChallengeError) {
+            throw new Error('Failed to update challenge progress: ' + upsertChallengeError.message);
+          }
+
+          if (newProgress >= challengeData.goal) {
+            const { data: userData, error: userDataError } = await supabase
+              .from('users')
+              .select('badges, level')
+              .eq('id', user.id)
+              .single();
+
+            if (userDataError) {
+              throw new Error('Failed to fetch user data for badge update: ' + userDataError.message);
             }
 
-            const { error: updateChallengeError } = await supabase
-              .from('challenge_participants')
-              .update({
-                progress: newProgress,
-                completed: newProgress >= challengeData.goal,
-              })
-              .eq('user_id', user.id)
-              .eq('challenge_id', challengeData.id);
-
-            if (updateChallengeError) {
-              throw new Error('Failed to update challenge progress: ' + updateChallengeError.message);
-            }
-
-            // Award badge and update level for completing the challenge
-            if (newProgress >= challengeData.goal) {
-              const { data: userData, error: userDataError } = await supabase
+            let badges = userData.badges || [];
+            let currentLevel = userData.level || 1;
+            if (!badges.includes('Eco-Warrior')) {
+              badges.push('Eco-Warrior');
+              if (currentLevel < 1) {
+                currentLevel = 1;
+              }
+              const { error: badgeUpdateError } = await supabase
                 .from('users')
-                .select('badges, level')
-                .eq('id', user.id)
-                .single();
+                .update({ badges, level: currentLevel })
+                .eq('id', user.id);
 
-              if (userDataError) {
-                throw new Error('Failed to fetch user data for badge update: ' + userDataError.message);
+              if (badgeUpdateError) {
+                throw new Error('Failed to award badge: ' + badgeUpdateError.message);
               }
-
-              let badges = userData.badges || [];
-              let currentLevel = userData.level || 1;
-              if (!badges.includes('Eco-Warrior')) {
-                badges.push('Eco-Warrior');
-                if (currentLevel < 1) { // Ensure level doesn't decrease
-                  currentLevel = 1;
-                }
-                const { error: badgeUpdateError } = await supabase
-                  .from('users')
-                  .update({ badges, level: currentLevel })
-                  .eq('id', user.id);
-
-                if (badgeUpdateError) {
-                  throw new Error('Failed to award badge: ' + badgeUpdateError.message);
-                }
-                setBadgeNotification('Eco-Warrior');
-              }
-            }
-          } else {
-            // User hasn't joined the challenge yet, insert a new record
-            const { error: insertChallengeError } = await supabase
-              .from('challenge_participants')
-              .insert({
-                user_id: user.id,
-                challenge_id: challengeData.id,
-                progress: weight,
-                completed: weight >= challengeData.goal,
-              });
-
-            if (insertChallengeError) {
-              throw new Error('Failed to join challenge: ' + insertChallengeError.message);
-            }
-
-            // Check if the challenge is completed with this classification
-            if (weight >= challengeData.goal) {
-              const { data: userData, error: userDataError } = await supabase
-                .from('users')
-                .select('badges, level')
-                .eq('id', user.id)
-                .single();
-
-              if (userDataError) {
-                throw new Error('Failed to fetch user data for badge update: ' + userDataError.message);
-              }
-
-              let badges = userData.badges || [];
-              let currentLevel = userData.level || 1;
-              if (!badges.includes('Eco-Warrior')) {
-                badges.push('Eco-Warrior');
-                if (currentLevel < 1) { // Ensure level doesn't decrease
-                  currentLevel = 1;
-                }
-                const { error: badgeUpdateError } = await supabase
-                  .from('users')
-                  .update({ badges, level: currentLevel })
-                  .eq('id', user.id);
-
-                if (badgeUpdateError) {
-                  throw new Error('Failed to award badge: ' + badgeUpdateError.message);
-                }
-                setBadgeNotification('Eco-Warrior');
-              }
+              setBadgeNotification('Eco-Warrior');
             }
           }
         }
       }
 
-      // Update user points and badges
       const { data: userData, error: fetchError } = await supabase
         .from('users')
         .select('points, badges')
@@ -260,7 +208,6 @@ const WasteClassifier = () => {
       const newPoints = (userData.points || 0) + (classificationResult.includes('Recyclable') ? 20 : 5);
       let badges = userData.badges || [];
 
-      // Check for "Recycler Pro" badge (10 recyclable items)
       const { data: recyclableCountData, error: recyclableCountError } = await supabase
         .from('classifications')
         .select('id')
@@ -276,8 +223,7 @@ const WasteClassifier = () => {
         setBadgeNotification('Recycler Pro');
       }
 
-      // Check for "Climate Champion" badge (5 kg CO2 saved)
-      const co2Saved = recyclableCountData.length * 0.2; // 0.2 kg CO2 per recyclable item
+      const co2Saved = recyclableCountData.length * 0.2;
       if (co2Saved >= 5 && !badges.includes('Climate Champion')) {
         badges.push('Climate Champion');
         setBadgeNotification('Climate Champion');
@@ -319,7 +265,6 @@ const WasteClassifier = () => {
 
   return (
     <div className={`min-h-screen ${isDarkMode ? 'bg-gray-900 text-white' : 'bg-gradient-to-br from-gray-50 to-gray-100'} flex flex-col`}>
-      {/* Header */}
       <header className={`flex justify-between items-center p-4 md:p-6 ${isDarkMode ? 'bg-gray-800' : 'bg-gradient-to-r from-teal-500 to-blue-500'} shadow-lg`}>
         <div className="flex items-center space-x-4">
           <button onClick={toggleSidebar} className="md:hidden text-white focus:outline-none">
@@ -368,7 +313,6 @@ const WasteClassifier = () => {
         </div>
       </header>
 
-      {/* Mobile Sidebar */}
       <AnimatePresence>
         {isSidebarOpen && (
           <motion.div
@@ -434,7 +378,6 @@ const WasteClassifier = () => {
         )}
       </AnimatePresence>
 
-      {/* Main Content */}
       <main className="flex-1 flex items-center justify-center p-4 md:p-6">
         <motion.div
           className={`w-full max-w-md ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-8 border relative overflow-hidden`}
@@ -447,7 +390,6 @@ const WasteClassifier = () => {
             Classify Waste
           </h2>
 
-          {/* Error Message */}
           {error && (
             <motion.p
               className="text-red-500 text-center mb-4 p-2 bg-red-100 rounded-lg"
@@ -459,7 +401,6 @@ const WasteClassifier = () => {
             </motion.p>
           )}
 
-          {/* Badge Notification */}
           {badgeNotification && (
             <motion.div
               className={`text-center mb-4 p-3 rounded-lg ${isDarkMode ? 'bg-yellow-900 text-yellow-300' : 'bg-yellow-100 text-yellow-700'} flex items-center justify-center space-x-2`}
@@ -472,7 +413,6 @@ const WasteClassifier = () => {
             </motion.div>
           )}
 
-          {/* Image Upload */}
           <div className="mb-6">
             <label className={`block text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'} mb-2`}>Upload an image of the waste item</label>
             <div className="flex items-center justify-center w-full">
@@ -499,7 +439,6 @@ const WasteClassifier = () => {
             </div>
           </div>
 
-          {/* Classify Button */}
           <motion.button
             onClick={handleClassify}
             disabled={loading}
@@ -533,7 +472,6 @@ const WasteClassifier = () => {
             )}
           </motion.button>
 
-          {/* Classification Result */}
           {result && (
             <motion.div
               className={`mt-6 p-4 rounded-lg ${result.classification.includes('Recyclable') ? (isDarkMode ? 'bg-green-900' : 'bg-green-100') : (isDarkMode ? 'bg-red-900' : 'bg-red-100')}`}
