@@ -1,4 +1,3 @@
-// src/App.jsx
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import Login from './components/Login';
@@ -7,6 +6,8 @@ import Dashboard from './components/Dashboard';
 import WasteClassifier from './components/WasteClassifier';
 import Community from './components/Community';
 import Profile from './components/Profile';
+import TeaserPage from './components/TeaserPage'; // Import TeaserPage
+import LifestyleSurvey from './components/LifestyleSurvey'; // Import LifestyleSurvey
 import { supabase } from './supabase';
 
 function App() {
@@ -38,6 +39,8 @@ function App() {
         <Route path="/classify" element={user ? <WasteClassifier /> : <Navigate to="/" />} />
         <Route path="/community" element={user ? <Community /> : <Navigate to="/" />} />
         <Route path="/profile" element={user ? <Profile /> : <Navigate to="/" />} />
+        <Route path="/teaser" element={user ? <TeaserPage /> : <Navigate to="/" />} /> {/* Add TeaserPage route */}
+        <Route path="/lifestyle-survey" element={user ? <LifestyleSurvey /> : <Navigate to="/" />} /> {/* Add LifestyleSurvey route */}
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Router>
