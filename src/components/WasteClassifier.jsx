@@ -16,6 +16,7 @@ const WasteClassifier = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const navigate = useNavigate();
 
+  // Check if the user is authenticated on component mount
   useEffect(() => {
     const checkUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -26,6 +27,7 @@ const WasteClassifier = () => {
     checkUser();
   }, [navigate]);
 
+  // Handle image upload and validation
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -47,6 +49,7 @@ const WasteClassifier = () => {
     }
   };
 
+  // Classify the waste item and update user progress
   const handleClassify = async () => {
     if (!image) {
       setError('Please upload an image to classify.');
@@ -61,6 +64,7 @@ const WasteClassifier = () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
 
+      // Basic classification logic based on file name
       const itemName = image.name.split('.')[0].toLowerCase();
       const classificationMap = {
         'bottle': { isRecyclable: true, material: 'Plastic', instructions: 'Remove cap and label, rinse thoroughly, then place in blue recycling bin.', tip: 'Use a reusable water bottle to reduce plastic waste.' },
@@ -86,6 +90,7 @@ const WasteClassifier = () => {
         wasteReductionTip = 'Consider researching the item’s recyclability or reducing its use.';
       }
 
+      // Upload the image to Supabase Storage
       const fileExt = image.name.split('.').pop();
       const fileName = `${user.id}/${Date.now()}.${fileExt}`;
       const { error: uploadError } = await supabase.storage
@@ -106,6 +111,7 @@ const WasteClassifier = () => {
 
       const imageUrl = urlData.publicUrl;
 
+      // Save the classification result to the database
       const weight = classificationResult.includes('Recyclable') ? 0.1 : 0;
       const { error: insertError } = await supabase.from('classifications').insert({
         user_id: user.id,
@@ -119,7 +125,7 @@ const WasteClassifier = () => {
         throw new Error('Failed to save classification: ' + insertError.message);
       }
 
-      // Update challenge progress for "Eco-Warrior"
+      // Update challenge progress for "Eco-Warrior" if the item is recyclable
       if (classificationResult.includes('Recyclable')) {
         const { data: challengeData, error: challengeError } = await supabase
           .from('challenges')
@@ -132,22 +138,26 @@ const WasteClassifier = () => {
         }
 
         if (challengeData) {
-          const { data: userChallenge, error: userChallengeError } = await supabase
+          // Fetch the user's progress for the challenge
+          const { data: userChallengeData, error: userChallengeError } = await supabase
             .from('challenge_participants')
             .select('progress')
             .eq('user_id', user.id)
-            .eq('challenge_id', challengeData.id)
-            .single();
+            .eq('challenge_id', challengeData.id);
 
-          if (userChallengeError && userChallengeError.code !== 'PGRST116') {
+          if (userChallengeError) {
             throw new Error('Failed to fetch challenge progress: ' + userChallengeError.message);
           }
+
+          // Handle case where no row exists for the user and challenge
+          const userChallenge = userChallengeData.length > 0 ? userChallengeData[0] : null;
 
           let newProgress = (userChallenge?.progress || 0) + weight;
           if (newProgress >= challengeData.goal) {
             newProgress = challengeData.goal;
           }
 
+          // Update or insert the user's challenge progress
           const { error: upsertChallengeError } = await supabase
             .from('challenge_participants')
             .upsert({
@@ -163,6 +173,7 @@ const WasteClassifier = () => {
             throw new Error('Failed to update challenge progress: ' + upsertChallengeError.message);
           }
 
+          // Award the "Eco-Warrior" badge if the challenge is completed
           if (newProgress >= challengeData.goal) {
             const { data: userData, error: userDataError } = await supabase
               .from('users')
@@ -195,6 +206,7 @@ const WasteClassifier = () => {
         }
       }
 
+      // Update user points and check for additional badges
       const { data: userData, error: fetchError } = await supabase
         .from('users')
         .select('points, badges')
@@ -238,26 +250,30 @@ const WasteClassifier = () => {
         throw new Error('Failed to update user data: ' + updateError.message);
       }
 
+      // Set the classification result for display
       setResult({
         classification: classificationResult,
         instructions: disposalInstructions,
         tip: wasteReductionTip,
       });
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'An unexpected error occurred. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
+  // Toggle dark mode
   const toggleDarkMode = () => {
     setIsDarkMode(!isDarkMode);
   };
 
+  // Toggle sidebar for mobile view
   const toggleSidebar = () => {
     setIsSidebarOpen(!isSidebarOpen);
   };
 
+  // Handle user sign-out
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     navigate('/');
