@@ -158,8 +158,8 @@ const Community = () => {
         user_id: user.id,
         content: newPost,
         tags: postTags,
-        likes: [], // Initialize likes as an empty array
-        comments: [], // Initialize comments as an empty array
+        likes: [], // Initialize likes as an empty array (uuid[])
+        comments: [], // Initialize comments as an empty array (will be serialized to jsonb)
       });
 
       if (error) throw error;
@@ -189,6 +189,7 @@ const Community = () => {
 
       setNewPost('');
       setPostTags([]);
+      setError(''); // Clear any previous errors
     } catch (err) {
       setError('Failed to create post: ' + err.message);
     }
@@ -219,6 +220,7 @@ const Community = () => {
       setPosts(posts.map(p =>
         p.id === postId ? { ...p, likes: updatedLikes } : p
       ));
+      setError(''); // Clear any previous errors
     } catch (err) {
       setError('Failed to like post: ' + err.message);
     }
@@ -227,11 +229,12 @@ const Community = () => {
   const handleComment = async (postId, comment) => {
     try {
       const post = posts.find((p) => p.id === postId);
-      const currentComments = Array.isArray(post.comments) ? post.comments : [];
+      // Ensure comments is a JSON array; initialize as empty array if null or invalid
+      let currentComments = Array.isArray(post.comments) ? post.comments : [];
       const updatedComments = [...currentComments, comment];
       const { error } = await supabase
         .from('posts')
-        .update({ comments: updatedComments })
+        .update({ comments: updatedComments }) // Supabase will serialize this to jsonb
         .eq('id', postId);
 
       if (error) throw error;
@@ -240,6 +243,7 @@ const Community = () => {
       setPosts(posts.map(p =>
         p.id === postId ? { ...p, comments: updatedComments } : p
       ));
+      setError(''); // Clear any previous errors
     } catch (err) {
       setError('Failed to add comment: ' + err.message);
     }
@@ -261,6 +265,7 @@ const Community = () => {
 
       // Update local state to reflect the user joining the challenge
       setUserChallenges([...userChallenges, { challenge_id: challengeId, progress: 0, completed: false }]);
+      setError(''); // Clear any previous errors
     } catch (err) {
       setError('Failed to join challenge: ' + err.message);
     }
@@ -361,6 +366,7 @@ const Community = () => {
           }
         }
       }
+      setError(''); // Clear any previous errors
     } catch (err) {
       setError('Failed to update challenge progress: ' + err.message);
     }
@@ -370,7 +376,10 @@ const Community = () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       const referredEmail = prompt('Enter the email of the friend you want to refer:');
-      if (!referredEmail) return;
+      if (!referredEmail) {
+        setError('Email cannot be empty.');
+        return;
+      }
 
       // Find the referred user by email
       const { data: referredUser, error: userError } = await supabase
@@ -419,6 +428,7 @@ const Community = () => {
       if (ecoInfluencerChallenge) {
         await handleUpdateProgress(ecoInfluencerChallenge.id, friendsCompleted - (userChallenges.find(uc => uc.challenge_id === ecoInfluencerChallenge.id)?.progress || 0));
       }
+      setError(''); // Clear any previous errors
     } catch (err) {
       setError('Failed to add referral: ' + err.message);
     }
@@ -811,6 +821,7 @@ const Community = () => {
                         onClick={() => {
                           const comment = prompt('Enter your comment:');
                           if (comment) handleComment(post.id, comment);
+                          else if (comment === '') setError('Comment cannot be empty.');
                         }}
                         className={`flex items-center space-x-1 ${isDarkMode ? 'text-gray-300 hover:text-blue-400' : 'text-gray-600 hover:text-blue-500'} transition-colors`}
                       >
