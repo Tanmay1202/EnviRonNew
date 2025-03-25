@@ -1,18 +1,19 @@
+// src/App.jsx
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import { supabase } from './supabase'; // Import Supabase client
+import { supabase } from './supabase';
 import Login from './components/Login.jsx';
 import Signup from './components/Signup.jsx';
 import Dashboard from './components/Dashboard.jsx';
 import WasteClassifier from './components/WasteClassifier.jsx';
+import Community from './components/Community.jsx'; // Import the Community component
 
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get the initial session
     const fetchSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setUser(session?.user ?? null);
@@ -21,13 +22,11 @@ function App() {
 
     fetchSession();
 
-    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null);
       setLoading(false);
     });
 
-    // Clean up the subscription on unmount
     return () => {
       subscription?.unsubscribe();
     };
@@ -49,6 +48,7 @@ function App() {
         <Route path="/signup" element={user ? <Navigate to="/dashboard" /> : <Signup />} />
         <Route path="/dashboard" element={user ? <Dashboard /> : <Navigate to="/" />} />
         <Route path="/classify" element={user ? <WasteClassifier /> : <Navigate to="/" />} />
+        <Route path="/community" element={user ? <Community /> : <Navigate to="/" />} />
       </Routes>
     </Router>
   );
