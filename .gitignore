@@ -2,3 +2,6 @@ node_modules
 build
 dist/
 .env
+vision-api-key.json
+backend/vision-api-key.json
+backend/.env

@@ -11,7 +11,7 @@ import LifestyleSurvey from './components/LifestyleSurvey';
 import Welcome from './components/Welcome';
 import Introduction from './components/Introduction';
 import LocationInput from './components/LocationInput';
-import { supabase } from './supabase';
+import { supabase, withRetry } from './supabase';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -24,14 +24,16 @@ function App() {
       console.log('App: Attempting to fetch from Supabase users table');
 
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Supabase query timed out after 5 seconds')), 5000);
+        setTimeout(() => reject(new Error('Supabase query timed out after 10 seconds')), 10000);
       });
 
-      const fetchPromise = supabase
-        .from('users')
-        .select('onboarding_completed')
-        .eq('id', userId)
-        .single();
+      const fetchPromise = withRetry(() =>
+        supabase
+          .from('users')
+          .select('onboarding_completed')
+          .eq('id', userId)
+          .single()
+      );
 
       const { data, error } = await Promise.race([fetchPromise, timeoutPromise]);
 
@@ -39,9 +41,11 @@ function App() {
         console.log('App: Supabase query returned an error:', error);
         if (error.code === 'PGRST116') {
           console.log('App: No user row found, creating new row for user:', userId);
-          const { error: insertError } = await supabase
-            .from('users')
-            .insert({ id: userId, onboarding_completed: false });
+          const { error: insertError } = await withRetry(() =>
+            supabase
+              .from('users')
+              .insert({ id: userId, onboarding_completed: false })
+          );
 
           if (insertError) {
             console.error('App: Error creating user row:', insertError.message);

@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaCamera, FaLeaf, FaSun, FaMoon, FaBars, FaTimes, FaMedal } from 'react-icons/fa';
 import { supabase } from '../supabase';
+import toast, { Toaster } from 'react-hot-toast';
 
 const WasteClassifier = () => {
   const [image, setImage] = useState(null);
@@ -15,6 +16,12 @@ const WasteClassifier = () => {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const navigate = useNavigate();
+
+  // Check for dark mode preference on mount
+  useEffect(() => {
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    setIsDarkMode(prefersDark);
+  }, []);
 
   // Check if the user is authenticated on component mount
   useEffect(() => {
@@ -34,10 +41,12 @@ const WasteClassifier = () => {
       const validTypes = ['image/jpeg', 'image/png', 'image/jpg'];
       if (!validTypes.includes(file.type)) {
         setError('Please upload a valid image (JPEG, PNG, or JPG).');
+        toast.error('Please upload a valid image (JPEG, PNG, or JPG).');
         return;
       }
       if (file.size > 5 * 1024 * 1024) {
         setError('Image size must be less than 5MB.');
+        toast.error('Image size must be less than 5MB.');
         return;
       }
 
@@ -49,10 +58,11 @@ const WasteClassifier = () => {
     }
   };
 
-  // Classify the waste item and update user progress
+  // Classify the waste item using the backend server and update user progress
   const handleClassify = async () => {
     if (!image) {
       setError('Please upload an image to classify.');
+      toast.error('Please upload an image to classify.');
       return;
     }
 
@@ -64,29 +74,57 @@ const WasteClassifier = () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
 
-      // Basic classification logic based on file name
-      const itemName = image.name.split('.')[0].toLowerCase();
+      // Convert the image to base64 for the backend
+      const imageBase64 = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result.split(',')[1]);
+        reader.readAsDataURL(image);
+      });
+
+      // Call the backend server using a relative URL (proxied by Vite)
+      const response = await fetch('/classify-waste', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ imageBase64 }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to classify image');
+      }
+
+      const { labels } = await response.json();
+      console.log('Vision API Labels:', labels); // For debugging
+
+      // Map Vision API labels to waste classification categories
       const classificationMap = {
+        'plastic bottle': { isRecyclable: true, material: 'Plastic', instructions: 'Remove cap and label, rinse thoroughly, then place in blue recycling bin.', tip: 'Use a reusable water bottle to reduce plastic waste.' },
         'bottle': { isRecyclable: true, material: 'Plastic', instructions: 'Remove cap and label, rinse thoroughly, then place in blue recycling bin.', tip: 'Use a reusable water bottle to reduce plastic waste.' },
         'can': { isRecyclable: true, material: 'Aluminum', instructions: 'Rinse to remove any residue, then place in blue recycling bin.', tip: 'Opt for bulk purchases to reduce packaging waste.' },
         'paper': { isRecyclable: true, material: 'Paper', instructions: 'Ensure it’s clean and free of food residue, then place in blue recycling bin.', tip: 'Switch to digital documents to reduce paper usage.' },
         'food': { isRecyclable: false, material: 'Organic Waste', instructions: 'Dispose in green compost bin if available, or in black landfill bin.', tip: 'Compost food scraps to reduce landfill waste.' },
         'wrapper': { isRecyclable: false, material: 'Plastic Film', instructions: 'Dispose in black landfill bin. Plastic films are not recyclable in most curbside programs.', tip: 'Use reusable containers to avoid plastic wrappers.' },
+        'plastic': { isRecyclable: true, material: 'Plastic', instructions: 'Rinse and place in blue recycling bin if accepted locally.', tip: 'Reduce plastic use by choosing reusable alternatives.' },
+        'glass': { isRecyclable: true, material: 'Glass', instructions: 'Rinse and place in blue recycling bin if accepted locally.', tip: 'Reuse glass containers to reduce waste.' },
+        'metal': { isRecyclable: true, material: 'Metal', instructions: 'Rinse and place in blue recycling bin.', tip: 'Opt for products with minimal packaging.' },
+        'organic': { isRecyclable: false, material: 'Organic Waste', instructions: 'Dispose in green compost bin if available, or in black landfill bin.', tip: 'Compost organic waste to reduce landfill impact.' },
       };
 
-      let classificationResult, disposalInstructions, wasteReductionTip;
-      const matchedItem = Object.keys(classificationMap).find(key => itemName.includes(key));
-      if (matchedItem) {
-        const itemData = classificationMap[matchedItem];
+      let classificationResult, disposalInstructions, wasteReductionTip, itemName;
+      const matchedLabel = labels.find((label) => Object.keys(classificationMap).some((key) => label.includes(key)));
+      if (matchedLabel) {
+        const matchedKey = Object.keys(classificationMap).find((key) => matchedLabel.includes(key));
+        const itemData = classificationMap[matchedKey];
+        itemName = matchedKey;
         classificationResult = itemData.isRecyclable ? `Recyclable - ${itemData.material}` : `Non-Recyclable - ${itemData.material}`;
         disposalInstructions = itemData.instructions;
         wasteReductionTip = itemData.tip;
       } else {
-        const isRecyclable = Math.random() > 0.5;
-        classificationResult = isRecyclable ? 'Recyclable - Unknown Material' : 'Non-Recyclable - Unknown Material';
-        disposalInstructions = isRecyclable
-          ? 'Place in blue recycling bin after ensuring it’s clean.'
-          : 'Dispose in black landfill bin.';
+        itemName = 'unknown';
+        classificationResult = 'Non-Recyclable - Unknown Material';
+        disposalInstructions = 'Dispose in black landfill bin.';
         wasteReductionTip = 'Consider researching the item’s recyclability or reducing its use.';
       }
 
@@ -201,6 +239,7 @@ const WasteClassifier = () => {
                 throw new Error('Failed to award badge: ' + badgeUpdateError.message);
               }
               setBadgeNotification('Eco-Warrior');
+              toast.success('Congratulations! You earned the "Eco-Warrior" badge!');
             }
           }
         }
@@ -233,12 +272,14 @@ const WasteClassifier = () => {
       if (recyclableCountData.length >= 10 && !badges.includes('Recycler Pro')) {
         badges.push('Recycler Pro');
         setBadgeNotification('Recycler Pro');
+        toast.success('Congratulations! You earned the "Recycler Pro" badge!');
       }
 
       const co2Saved = recyclableCountData.length * 0.2;
       if (co2Saved >= 5 && !badges.includes('Climate Champion')) {
         badges.push('Climate Champion');
         setBadgeNotification('Climate Champion');
+        toast.success('Congratulations! You earned the "Climate Champion" badge!');
       }
 
       const { error: updateError } = await supabase
@@ -256,8 +297,10 @@ const WasteClassifier = () => {
         instructions: disposalInstructions,
         tip: wasteReductionTip,
       });
+      toast.success('Waste classified successfully!');
     } catch (err) {
       setError(err.message || 'An unexpected error occurred. Please try again.');
+      toast.error(err.message || 'An unexpected error occurred. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -276,11 +319,13 @@ const WasteClassifier = () => {
   // Handle user sign-out
   const handleSignOut = async () => {
     await supabase.auth.signOut();
+    toast.success('Signed out successfully!');
     navigate('/');
   };
 
   return (
     <div className={`min-h-screen ${isDarkMode ? 'bg-gray-900 text-white' : 'bg-gradient-to-br from-gray-50 to-gray-100'} flex flex-col`}>
+      <Toaster position="bottom-right" />
       <header className={`flex justify-between items-center p-4 md:p-6 ${isDarkMode ? 'bg-gray-800' : 'bg-gradient-to-r from-teal-500 to-blue-500'} shadow-lg`}>
         <div className="flex items-center space-x-4">
           <button onClick={toggleSidebar} className="md:hidden text-white focus:outline-none">
@@ -490,24 +535,23 @@ const WasteClassifier = () => {
 
           {result && (
             <motion.div
-              className={`mt-6 p-4 rounded-lg ${result.classification.includes('Recyclable') ? (isDarkMode ? 'bg-green-900' : 'bg-green-100') : (isDarkMode ? 'bg-red-900' : 'bg-red-100')}`}
+              className={`mt-6 p-4 rounded-lg ${result.classification.includes('Recyclable') ? (isDarkMode ? 'bg-green-900 text-green-300' : 'bg-green-100 text-green-700') : (isDarkMode ? 'bg-red-900 text-red-300' : 'bg-red-100 text-red-700')}`}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
             >
-              <h3 className={`text-lg font-bold ${result.classification.includes('Recyclable') ? (isDarkMode ? 'text-green-300' : 'text-green-700') : (isDarkMode ? 'text-red-300' : 'text-red-700')}`}>
-                Result: {result.classification}
-              </h3>
-              <p className={`mt-2 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                <span className="font-medium">Disposal Instructions:</span> {result.instructions}
-              </p>
-              <p className={`mt-2 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                <span className="font-medium">Waste Reduction Tip:</span> {result.tip}
-              </p>
+              <h3 className="text-lg font-semibold mb-2">Classification Result</h3>
+              <p><strong>Result:</strong> {result.classification}</p>
+              <p><strong>Disposal Instructions:</strong> {result.instructions}</p>
+              <p><strong>Waste Reduction Tip:</strong> {result.tip}</p>
             </motion.div>
           )}
         </motion.div>
       </main>
+
+      <footer className={`p-4 text-center ${isDarkMode ? 'bg-gray-800 text-gray-400' : 'bg-white text-gray-600'} shadow-inner`}>
+        <p>© 2025 EnviRon. All rights reserved.</p>
+      </footer>
     </div>
   );
 };
