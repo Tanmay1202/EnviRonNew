@@ -74,6 +74,22 @@ const WasteClassifier = () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
 
+      // Get user location
+      let userLocation;
+      try {
+        userLocation = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(
+            (position) => resolve({
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+            }),
+            (err) => reject(err)
+          );
+        });
+      } catch (err) {
+        throw new Error('Failed to get your location. Please enable location services.');
+      }
+
       // Convert the image to base64 for the backend
       const imageBase64 = await new Promise((resolve) => {
         const reader = new FileReader();
@@ -87,7 +103,7 @@ const WasteClassifier = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ imageBase64 }),
+        body: JSON.stringify({ imageBase64, userLocation }),
       });
 
       if (!response.ok) {
@@ -95,10 +111,10 @@ const WasteClassifier = () => {
         throw new Error(errorData.error || 'Failed to classify image');
       }
 
-      const { labels } = await response.json();
-      console.log('Vision API Labels:', labels); // For debugging
+      const { labels, wasteType, locations } = await response.json();
+      console.log('Backend Response:', { labels, wasteType, locations }); // For debugging
 
-      // Map Vision API labels to waste classification categories
+      // Map waste type to classification details
       const classificationMap = {
         'plastic bottle': { isRecyclable: true, material: 'Plastic', instructions: 'Remove cap and label, rinse thoroughly, then place in blue recycling bin.', tip: 'Use a reusable water bottle to reduce plastic waste.' },
         'bottle': { isRecyclable: true, material: 'Plastic', instructions: 'Remove cap and label, rinse thoroughly, then place in blue recycling bin.', tip: 'Use a reusable water bottle to reduce plastic waste.' },
@@ -110,12 +126,19 @@ const WasteClassifier = () => {
         'glass': { isRecyclable: true, material: 'Glass', instructions: 'Rinse and place in blue recycling bin if accepted locally.', tip: 'Reuse glass containers to reduce waste.' },
         'metal': { isRecyclable: true, material: 'Metal', instructions: 'Rinse and place in blue recycling bin.', tip: 'Opt for products with minimal packaging.' },
         'organic': { isRecyclable: false, material: 'Organic Waste', instructions: 'Dispose in green compost bin if available, or in black landfill bin.', tip: 'Compost organic waste to reduce landfill impact.' },
+        'battery': { isRecyclable: false, material: 'Hazardous Waste', instructions: 'Take to a hazardous waste facility or battery recycling drop-off.', tip: 'Use rechargeable batteries to reduce waste.' },
+        'electronics': { isRecyclable: false, material: 'Hazardous Waste', instructions: 'Take to an e-waste recycling center.', tip: 'Donate working electronics to extend their lifespan.' },
+        'chemical': { isRecyclable: false, material: 'Hazardous Waste', instructions: 'Dispose at a hazardous waste facility.', tip: 'Use eco-friendly alternatives to reduce chemical use.' },
+        'paint': { isRecyclable: false, material: 'Hazardous Waste', instructions: 'Dispose at a hazardous waste facility.', tip: 'Buy only what you need to avoid excess paint.' },
+        'clothes': { isRecyclable: false, material: 'Donatable', instructions: 'Donate to a thrift store or charity if in good condition.', tip: 'Buy second-hand clothes to reduce textile waste.' },
+        'furniture': { isRecyclable: false, material: 'Donatable', instructions: 'Donate to a thrift store or charity if in good condition.', tip: 'Upcycle old furniture to give it a new life.' },
+        'book': { isRecyclable: false, material: 'Donatable', instructions: 'Donate to a library, school, or charity.', tip: 'Share books with friends to reduce waste.' },
       };
 
       let classificationResult, disposalInstructions, wasteReductionTip, itemName;
-      const matchedLabel = labels.find((label) => Object.keys(classificationMap).some((key) => label.includes(key)));
+      const matchedLabel = labels.find(label => Object.keys(classificationMap).some(key => label.includes(key)));
       if (matchedLabel) {
-        const matchedKey = Object.keys(classificationMap).find((key) => matchedLabel.includes(key));
+        const matchedKey = Object.keys(classificationMap).find(key => matchedLabel.includes(key));
         const itemData = classificationMap[matchedKey];
         itemName = matchedKey;
         classificationResult = itemData.isRecyclable ? `Recyclable - ${itemData.material}` : `Non-Recyclable - ${itemData.material}`;
@@ -176,7 +199,6 @@ const WasteClassifier = () => {
         }
 
         if (challengeData) {
-          // Fetch the user's progress for the challenge
           const { data: userChallengeData, error: userChallengeError } = await supabase
             .from('challenge_participants')
             .select('progress')
@@ -187,15 +209,12 @@ const WasteClassifier = () => {
             throw new Error('Failed to fetch challenge progress: ' + userChallengeError.message);
           }
 
-          // Handle case where no row exists for the user and challenge
           const userChallenge = userChallengeData.length > 0 ? userChallengeData[0] : null;
-
           let newProgress = (userChallenge?.progress || 0) + weight;
           if (newProgress >= challengeData.goal) {
             newProgress = challengeData.goal;
           }
 
-          // Update or insert the user's challenge progress
           const { error: upsertChallengeError } = await supabase
             .from('challenge_participants')
             .upsert({
@@ -211,7 +230,6 @@ const WasteClassifier = () => {
             throw new Error('Failed to update challenge progress: ' + upsertChallengeError.message);
           }
 
-          // Award the "Eco-Warrior" badge if the challenge is completed
           if (newProgress >= challengeData.goal) {
             const { data: userData, error: userDataError } = await supabase
               .from('users')
@@ -296,6 +314,8 @@ const WasteClassifier = () => {
         classification: classificationResult,
         instructions: disposalInstructions,
         tip: wasteReductionTip,
+        wasteType,
+        locations,
       });
       toast.success('Waste classified successfully!');
     } catch (err) {
@@ -544,6 +564,19 @@ const WasteClassifier = () => {
               <p><strong>Result:</strong> {result.classification}</p>
               <p><strong>Disposal Instructions:</strong> {result.instructions}</p>
               <p><strong>Waste Reduction Tip:</strong> {result.tip}</p>
+
+              <h3 className="text-lg font-semibold mt-4">Suggested Locations</h3>
+              {result.locations.length > 0 ? (
+                <ul className="list-disc pl-5 mt-2">
+                  {result.locations.map((location, index) => (
+                    <li key={index} className="mb-2">
+                      <strong>{location.name}</strong> - {location.address} (Rating: {location.rating})
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2">No nearby locations found. Try searching manually for {result.wasteType.toLowerCase()} disposal options.</p>
+              )}
             </motion.div>
           )}
         </motion.div>
