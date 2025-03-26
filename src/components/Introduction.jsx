@@ -20,8 +20,8 @@ const Introduction = ({ refreshOnboardingStatus }) => {
         <h2 className="text-2xl font-bold bg-gradient-to-l from-blue-400 to-teal-400 bg-clip-text text-transparent mb-4">
           Are You Ready?
         </h2>
-        <p className="text-gray-600 mb-6">
-          Welcome to EnviRon, a gamified waste management world! Classify waste, earn points, compete on leaderboards, and help the planet—one step at a time.
+        <p className="text-gray-800 mb-6">
+        Welcome to EnviRon, hero of the planet! 🌍protect the environment, earn badges, and save the Earth—one level at a time. EnviRon makes you the ultimate eco-warrior in a fun, rewarding quest to make the world greener! 🚀💚
         </p>
         <motion.button
           onClick={handleNext}
