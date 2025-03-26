@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaTrophy, FaMedal, FaStar, FaLeaf, FaSun, FaMoon, FaRecycle, FaTrash, FaTree, FaComment, FaBars, FaTimes, FaCloud } from 'react-icons/fa';
+import { FaTrophy, FaMedal, FaStar, FaLeaf, FaSun, FaMoon, FaRecycle, FaTrash, FaTree, FaComment, FaBars, FaTimes, FaCloud, FaMapMarkerAlt } from 'react-icons/fa';
 import Confetti from 'react-confetti';
 import { CircularProgressbar, buildStyles } from 'react-circular-progressbar';
 import 'react-circular-progressbar/dist/styles.css';
@@ -44,51 +44,54 @@ const Dashboard = () => {
     const fetchUserData = async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          setCurrentUserEmail(user.email);
+        if (!user) {
+          navigate('/'); // Redirect to login if user is not authenticated
+          return;
+        }
 
-          const { data, error } = await supabase
+        setCurrentUserEmail(user.email);
+
+        const { data, error } = await supabase
+          .from('users')
+          .select('full_name, points, level, badges, email, city')
+          .eq('id', user.id)
+          .single();
+
+        if (error) {
+          console.error('Error fetching user data:', error);
+          return;
+        }
+
+        setUserData(data);
+
+        if (prevLevelRef.current !== null && data.level > prevLevelRef.current) {
+          setShowConfetti(true);
+        }
+        prevLevelRef.current = data.level;
+
+        const { data: historyData, error: historyError } = await supabase
+          .from('classifications')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('timestamp', { ascending: false });
+
+        if (historyError) {
+          console.error('Error fetching classification history:', historyError);
+          return;
+        }
+
+        setClassificationHistory(historyData);
+
+        const recyclableCount = historyData.filter(c => c.result === 'Recyclable').length;
+        const co2Saved = recyclableCount * 0.2;
+        let badges = data.badges || [];
+        if (co2Saved >= 5 && !badges.includes('Climate Champion')) {
+          badges.push('Climate Champion');
+          await supabase
             .from('users')
-            .select('*')
-            .eq('id', user.id)
-            .single();
-
-          if (error) {
-            console.error('Error fetching user data:', error);
-            return;
-          }
-
-          setUserData(data);
-
-          if (prevLevelRef.current !== null && data.level > prevLevelRef.current) {
-            setShowConfetti(true);
-          }
-          prevLevelRef.current = data.level;
-
-          const { data: historyData, error: historyError } = await supabase
-            .from('classifications')
-            .select('*')
-            .eq('user_id', user.id)
-            .order('timestamp', { ascending: false });
-
-          if (historyError) {
-            console.error('Error fetching classification history:', historyError);
-            return;
-          }
-
-          setClassificationHistory(historyData);
-
-          const recyclableCount = historyData.filter(c => c.result === 'Recyclable').length;
-          const co2Saved = recyclableCount * 0.2;
-          let badges = data.badges || [];
-          if (co2Saved >= 5 && !badges.includes('Climate Champion')) {
-            badges.push('Climate Champion');
-            await supabase
-              .from('users')
-              .update({ badges })
-              .eq('id', user.id);
-            setUserData({ ...data, badges });
-          }
+            .update({ badges })
+            .eq('id', user.id);
+          setUserData({ ...data, badges });
         }
       } catch (err) {
         console.error('Error in fetchUserData:', err);
@@ -139,7 +142,7 @@ const Dashboard = () => {
           .eq('id', user.id)
           .single();
 
-        const city = userData?.city || 'London';
+        const city = userData?.city || 'London'; // Fallback to London if city is not set
         const response = await fetch(
           `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${import.meta.env.VITE_OPENWEATHER_API_KEY}&units=metric`
         );
@@ -184,7 +187,7 @@ const Dashboard = () => {
       supabase.removeChannel(leaderboardSubscription);
       supabase.removeChannel(historySubscription);
     };
-  }, []);
+  }, [navigate]);
 
   const handleChatSubmit = async (e) => {
     e.preventDefault();
@@ -764,6 +767,24 @@ const Dashboard = () => {
                         <span>Classify Waste</span>
                       </Link>
                     </motion.div>
+                  </motion.div>
+
+                  {/* New Placeholder for Waste Disposal Locations */}
+                  <motion.div
+                    className={`col-span-1 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-6 border relative overflow-hidden`}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5, delay: 0.5 }}
+                    whileHover={{ scale: 1.02 }}
+                  >
+                    <div className="absolute inset-0 shadow-[inset_0_0_10px_rgba(45,212,191,0.3)] rounded-2xl pointer-events-none" />
+                    <h3 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'} mb-4 flex items-center space-x-2`}>
+                      <FaMapMarkerAlt className="text-blue-500 animate-pulse" />
+                      <span>Nearby Waste Disposal Locations</span>
+                    </h3>
+                    <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                      Coming soon! We’ll help you find places to dispose of your waste responsibly based on your location.
+                    </p>
                   </motion.div>
                 </div>
               </section>

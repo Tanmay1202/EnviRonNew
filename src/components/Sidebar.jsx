@@ -301,25 +301,6 @@ const Sidebar = ({ isDarkMode, isSidebarOpen, toggleSidebar }) => {
                 )}
               </AnimatePresence>
             </div>
-
-            {/* Add some extra content to test scrolling */}
-            <div className="space-y-4">
-              <div className="p-4 rounded-lg bg-gray-200">
-                <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                  This is additional content to test scrolling. The sidebar should now scroll vertically if the content exceeds the viewport height.
-                </p>
-              </div>
-              <div className="p-4 rounded-lg bg-gray-200">
-                <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                  More content here to ensure the sidebar scrolls properly.
-                </p>
-              </div>
-              <div className="p-4 rounded-lg bg-gray-200">
-                <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                  Keep adding content to test the scrolling behavior.
-                </p>
-              </div>
-            </div>
           </motion.div>
         )}
       </AnimatePresence>

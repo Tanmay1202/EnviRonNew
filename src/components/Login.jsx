@@ -1,8 +1,7 @@
-// src/components/Login.jsx
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { FaSun, FaMoon, FaBars, FaTimes } from 'react-icons/fa';
+import { FaSun, FaMoon, FaBars, FaTimes, FaLeaf } from 'react-icons/fa'; // Added FaLeaf
 import { supabase } from '../supabase';
 
 const Login = () => {
@@ -16,9 +15,7 @@ const Login = () => {
   useEffect(() => {
     const checkUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        navigate('/dashboard');
-      }
+      if (user) navigate('/welcome'); // Updated to redirect to /welcome if user is already logged in
     };
     checkUser();
   }, [navigate]);
@@ -26,67 +23,42 @@ const Login = () => {
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
-
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        throw error;
-      }
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
 
       const userId = data.user.id;
-
       const { data: userData, error: fetchError } = await supabase
         .from('users')
         .select('points, badges')
         .eq('id', userId)
         .single();
-
-      if (fetchError) {
-        throw fetchError;
-      }
+      if (fetchError) throw fetchError;
 
       const newPoints = (userData.points || 0) + 10;
       let badges = userData.badges || [];
-
-      if (newPoints >= 100 && !badges.includes('Recycler Rookie')) {
-        badges.push('Recycler Rookie');
-      }
-      if (newPoints >= 500 && !badges.includes('Eco Warrior')) {
-        badges.push('Eco Warrior');
-      }
+      if (newPoints >= 100 && !badges.includes('Recycler Rookie')) badges.push('Recycler Rookie');
+      if (newPoints >= 500 && !badges.includes('Eco Warrior')) badges.push('Eco Warrior');
 
       const { error: updateError } = await supabase
         .from('users')
         .update({ points: newPoints, badges })
         .eq('id', userId);
+      if (updateError) throw updateError;
 
-      if (updateError) {
-        throw updateError;
-      }
-
-      navigate('/dashboard');
+      navigate('/welcome'); // Updated to redirect to /welcome instead of /dashboard
     } catch (err) {
       setError('Login failed: ' + err.message);
     }
   };
 
-  const toggleDarkMode = () => {
-    setIsDarkMode(!isDarkMode);
-  };
-
-  const toggleSidebar = () => {
-    setIsSidebarOpen(!isSidebarOpen);
-  };
+  const toggleDarkMode = () => setIsDarkMode(!isDarkMode);
+  const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
 
   return (
-    <div className={`min-h-screen ${isDarkMode ? 'bg-gray-900 text-white' : 'bg-gradient-to-br from-gray-50 to-gray-100'} flex flex-col`}>
-      {/* Header */}
-      <header className={`flex justify-between items-center p-4 md:p-6 ${isDarkMode ? 'bg-gray-800' : 'bg-gradient-to-r from-teal-500 to-blue-500'} shadow-lg`}>
-        <div className="flex items-center space-x-4">
+    <div className={`min-h-screen flex flex-col ${isDarkMode ? 'bg-gray-900 text-white' : 'bg-gradient-to-l from-blue-300 to-teal-300'}`}>
+      <header className={`flex justify-between items-center p-4 shadow-md ${isDarkMode ? 'bg-gray-800' : 'bg-gradient-to-l from-blue-400 to-teal-400'}`}>
+        <div className="flex items-center space-x-3">
           <button onClick={toggleSidebar} className="md:hidden text-white focus:outline-none">
             {isSidebarOpen ? <FaTimes className="h-6 w-6" /> : <FaBars className="h-6 w-6" />}
           </button>
@@ -95,20 +67,9 @@ const Login = () => {
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.95 }}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className={`h-6 w-6 ${isDarkMode ? 'text-teal-300' : 'text-teal-500'}`}
-              viewBox="0 0 20 20"
-              fill="currentColor"
-            >
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 100-16 8 8 0 000 16zM4.332 8.027a6.012 6.012 0 011.912-2.706C6.512 5.73 6.974 6 7.5 6A1.5 1.5 0 019 7.5V8a2 2 0 004 0 2 2 0 011.523-1.943A5.977 5.977 0 0116 10c0 .34-.028.675-.083 1H15a2 2 0 00-2 2v2.197A5.973 5.973 0 0110 16v-2a2 2 0 00-2-2 2 2 0 01-2-2 2 2 0 00-1.668-1.973z"
-                clipRule="evenodd"
-              />
-            </svg>
+            <FaLeaf className={`h-6 w-6 ${isDarkMode ? 'text-teal-300' : 'text-teal-500'}`} />
           </motion.div>
-          <h1 className="text-xl md:text-2xl font-bold text-white">EnviRon</h1>
+          <h1 className="text-xl font-bold text-white">EnviRon</h1>
         </div>
         <div className="hidden md:flex items-center space-x-4">
           <Link to="/signup" className="text-white hover:text-gray-200 transition-colors">
@@ -119,14 +80,12 @@ const Login = () => {
             className={`p-2 rounded-full ${isDarkMode ? 'bg-gray-700 text-yellow-300' : 'bg-white text-gray-800'}`}
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.95 }}
-            aria-label={isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
           >
             {isDarkMode ? <FaSun /> : <FaMoon />}
           </motion.button>
         </div>
       </header>
 
-      {/* Mobile Sidebar */}
       {isSidebarOpen && (
         <motion.div
           className={`md:hidden fixed inset-y-0 left-0 w-64 ${isDarkMode ? 'bg-gray-800' : 'bg-white'} shadow-lg z-50 p-6`}
@@ -145,13 +104,13 @@ const Login = () => {
             <Link
               to="/signup"
               onClick={toggleSidebar}
-              className={`block text-lg ${isDarkMode ? 'text-gray-200 hover:text-teal-300' : 'text-gray-800 hover:text-teal-500'} transition-colors`}
+              className={`block text-lg ${isDarkMode ? 'text-gray-200 hover:text-teal-300' : 'text-gray-800 hover:text-teal-500'}`}
             >
               Sign Up
             </Link>
             <button
               onClick={toggleDarkMode}
-              className={`flex items-center space-x-2 text-lg ${isDarkMode ? 'text-gray-200 hover:text-teal-300' : 'text-gray-800 hover:text-teal-500'} transition-colors`}
+              className={`flex items-center space-x-2 text-lg ${isDarkMode ? 'text-gray-200 hover:text-teal-300' : 'text-gray-800 hover:text-teal-500'}`}
             >
               {isDarkMode ? <FaSun /> : <FaMoon />}
               <span>{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>
@@ -160,18 +119,19 @@ const Login = () => {
         </motion.div>
       )}
 
-      {/* Main Content */}
-      <main className="flex-1 flex items-center justify-center p-4 md:p-6">
+      <main className="flex-1 flex items-center justify-center px-4">
         <motion.div
-          className={`w-full max-w-md ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'} rounded-2xl shadow-lg p-8 border relative overflow-hidden`}
+          className={`w-[400px] ${isDarkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow-lg p-8`}
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
-          <div className="absolute inset-0 shadow-[inset_0_0_10px_rgba(45,212,191,0.3)] rounded-2xl pointer-events-none" />
-          <h2 className={`text-2xl md:text-3xl font-bold text-center mb-6 ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
-            Login to EnviRon
+          <h2 className={`text-3xl font-bold text-center mb-2 ${isDarkMode ? 'text-white' : 'bg-gradient-to-l from-blue-400 to-teal-400 bg-clip-text text-transparent'}`}>
+            Welcome Back!
           </h2>
+          <p className={`text-center mb-8 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+            Please sign in to continue to your account
+          </p>
           {error && (
             <motion.p
               className="text-red-500 text-center mb-4 p-2 bg-red-100 rounded-lg"
@@ -182,42 +142,57 @@ const Login = () => {
               {error}
             </motion.p>
           )}
-          <form onSubmit={handleLogin} className="space-y-6">
+          <form onSubmit={handleLogin} className="flex flex-col space-y-6">
             <div className="space-y-2">
               <label className={`block text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className={`w-full p-3 rounded-lg border ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-200 placeholder-gray-400' : 'bg-gray-100 border-gray-300 text-gray-800 placeholder-gray-500'} focus:outline-none focus:ring-2 focus:ring-teal-400 transition-all`}
-                placeholder="Enter your email"
-              />
+              <div className="relative">
+                <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/>
+                    <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/>
+                  </svg>
+                </span>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  className={`w-full pl-10 pr-4 py-2 border ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-200 text-gray-600'} rounded-md focus:outline-none focus:border-blue-400`}
+                  placeholder="Enter your email"
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <label className={`block text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className={`w-full p-3 rounded-lg border ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-200 placeholder-gray-400' : 'bg-gray-100 border-gray-300 text-gray-800 placeholder-gray-500'} focus:outline-none focus:ring-2 focus:ring-teal-400 transition-all`}
-                placeholder="Enter your password"
-              />
+              <div className="relative">
+                <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd"/>
+                  </svg>
+                </span>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className={`w-full pl-10 pr-4 py-2 border ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-200 text-gray-600'} rounded-md focus:outline-none focus:border-blue-400`}
+                  placeholder="Enter your password"
+                />
+              </div>
             </div>
             <motion.button
               type="submit"
-              className={`w-full py-3 rounded-lg font-semibold text-white ${isDarkMode ? 'bg-gradient-to-r from-teal-600 to-blue-600 hover:from-teal-700 hover:to-blue-700' : 'bg-gradient-to-r from-teal-400 to-blue-400 hover:from-teal-500 hover:to-blue-500'} transition-all shadow-lg`}
+              className={`w-full py-3 text-white font-medium rounded-md ${isDarkMode ? 'bg-gradient-to-r from-teal-600 to-blue-600 hover:from-teal-700 hover:to-blue-700' : 'bg-gradient-to-l from-blue-400 to-teal-400 hover:opacity-90'}`}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
               Login
             </motion.button>
           </form>
-          <p className={`text-center mt-4 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+          <p className={`text-center mt-6 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
             Don’t have an account?{' '}
-            <Link to="/signup" className={`${isDarkMode ? 'text-teal-300 hover:text-teal-400' : 'text-teal-500 hover:text-teal-600'} transition-colors`}>
-              Sign Up
+            <Link to="/signup" className={`${isDarkMode ? 'text-teal-300 hover:text-teal-400' : 'text-blue-500 hover:text-blue-600'} font-medium`}>
+              Create an account
             </Link>
           </p>
         </motion.div>
