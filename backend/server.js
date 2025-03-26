@@ -20,9 +20,8 @@ const googleMapsClient = new Client({});
 // Use CORS middleware to allow requests from your frontend
 app.use(cors({
   origin: [
-    'https://5173-idx-environ-1742316025738.cluster-mwrgkbggpvbq6tvtviraw2knqg.cloudworkstations.dev', // Local dev URL
-    'http://localhost:5173', // Local dev URL (alternative)
-    // Add your Vercel deployment URL after deployment, e.g., 'https://environ-abc123.vercel.app'
+    'https://5173-idx-environ-1742316025738.cluster-mwrgkbggpvbq6tvtviraw2knqg.cloudworkstations.dev',
+    'http://localhost:5173',
   ],
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type'],
@@ -79,6 +78,8 @@ const findNearbyLocations = async (wasteType, userLocation) => {
       query = 'waste disposal';
   }
 
+  console.log('Fetching nearby locations:', { wasteType, query, userLocation });
+
   try {
     const response = await googleMapsClient.placesNearby({
       params: {
@@ -89,11 +90,21 @@ const findNearbyLocations = async (wasteType, userLocation) => {
       },
     });
 
-    return response.data.results.slice(0, 3).map(place => ({
+    console.log('Google Maps API Response:', response.data);
+
+    if (response.data.status !== 'OK') {
+      console.error('Google Maps API Error:', response.data.status, response.data.error_message);
+      return [];
+    }
+
+    const locations = response.data.results.slice(0, 3).map(place => ({
       name: place.name,
       address: place.vicinity,
       rating: place.rating || 'N/A',
     }));
+
+    console.log('Mapped Locations:', locations);
+    return locations;
   } catch (error) {
     console.error('Error fetching nearby locations:', error);
     return [];
@@ -117,7 +128,7 @@ app.post('/classify-waste', async (req, res) => {
     });
 
     const labels = visionResult.labelAnnotations.map(label => label.description.toLowerCase());
-    console.log('Vision API Labels:', labels); // For debugging
+    console.log('Vision API Labels:', labels);
 
     // Classify waste type
     const wasteType = classifyWasteType(labels);
